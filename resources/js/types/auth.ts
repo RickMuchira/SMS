@@ -22,3 +22,18 @@ export type TwoFactorSetupData = {
 export type TwoFactorSecretKey = {
     secretKey: string;
 };
+
+export type AuthUserWithRbac = {
+    user: User | null;
+    roles: string[];
+    permissions: string[];
+};
+
+export type AuthUserWithRbacPageProps = {
+    auth?: {
+        user: User | null;
+        roles: string[];
+        permissions: string[];
+    };
+};
+

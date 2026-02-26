@@ -1,0 +1,78 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\SchoolClass;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+
+class SchoolClassController extends Controller
+{
+    /**
+     * Display a listing of classes.
+     */
+    public function index(Request $request): Response
+    {
+        $classes = SchoolClass::query()
+            ->withCount('students')
+            ->orderBy('name')
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = $request->string('search');
+                $query->where('name', 'like', "%{$search}%");
+            })
+            ->paginate($request->integer('per_page', 50));
+
+        return response($classes, Response::HTTP_OK);
+    }
+
+    /**
+     * Store a newly created class.
+     */
+    public function store(Request $request): Response
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255', 'unique:school_classes,name'],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $class = SchoolClass::create($validated);
+
+        return response(['class' => $class], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Display the specified class.
+     */
+    public function show(SchoolClass $schoolClass): Response
+    {
+        $schoolClass->loadCount('students');
+
+        return response(['class' => $schoolClass], Response::HTTP_OK);
+    }
+
+    /**
+     * Update the specified class.
+     */
+    public function update(Request $request, SchoolClass $schoolClass): Response
+    {
+        $validated = $request->validate([
+            'name' => ['sometimes', 'string', 'max:255', 'unique:school_classes,name,'.$schoolClass->id],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $schoolClass->update($validated);
+
+        return response(['class' => $schoolClass->fresh()], Response::HTTP_OK);
+    }
+
+    /**
+     * Remove the specified class.
+     */
+    public function destroy(SchoolClass $schoolClass): Response
+    {
+        $schoolClass->delete();
+
+        return response()->noContent();
+    }
+}

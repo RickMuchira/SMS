@@ -1,5 +1,5 @@
 import { Link } from '@inertiajs/react';
-import { BookOpen, Folder, LayoutGrid } from 'lucide-react';
+import { BookOpen, Bus, FileText, Folder, GraduationCap, LayoutGrid, Shield, Users } from 'lucide-react';
 import { NavFooter } from '@/components/nav-footer';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -14,15 +14,8 @@ import {
 } from '@/components/ui/sidebar';
 import type { NavItem } from '@/types';
 import AppLogo from './app-logo';
-import { dashboard } from '@/routes';
-
-const mainNavItems: NavItem[] = [
-    {
-        title: 'Dashboard',
-        href: dashboard(),
-        icon: LayoutGrid,
-    },
-];
+import { dashboard as adminDashboard } from '@/routes/admin';
+import { usePermissions } from '@/hooks/use-permissions';
 
 const footerNavItems: NavItem[] = [
     {
@@ -38,13 +31,86 @@ const footerNavItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
+    const { canViewModule, hasPermission } = usePermissions();
+
+    const mainNavItems: NavItem[] = [
+        {
+            title: 'Dashboard',
+            href: adminDashboard(),
+            icon: LayoutGrid,
+        },
+        ...(hasPermission('manage roles')
+            ? [
+                  {
+                      title: 'User management',
+                      href: '/admin/users',
+                      icon: Shield,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(hasPermission('manage classes')
+            ? [
+                  {
+                      title: 'Classes',
+                      href: '/admin/classes',
+                      icon: LayoutGrid,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(hasPermission('manage students')
+            ? [
+                  {
+                      title: 'Students',
+                      href: '/admin/students',
+                      icon: Users,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(hasPermission('manage staff')
+            ? [
+                  {
+                      title: 'Staff & Teachers',
+                      href: '/admin/staff',
+                      icon: GraduationCap,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(canViewModule('drivers')
+            ? [
+                  {
+                      title: 'Drivers',
+                      href: '/drivers',
+                      icon: Bus,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(canViewModule('fees')
+            ? [
+                  {
+                      title: 'Fees',
+                      href: '/fees',
+                      icon: FileText,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(canViewModule('transport')
+            ? [
+                  {
+                      title: 'Transport',
+                      href: '/transport',
+                      icon: Bus,
+                  } satisfies NavItem,
+              ]
+            : []),
+    ];
+
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                            <Link href={dashboard()} prefetch>
+                            <Link href={adminDashboard()} prefetch>
                                 <AppLogo />
                             </Link>
                         </SidebarMenuButton>

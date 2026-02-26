@@ -4,8 +4,10 @@ namespace App\Providers;
 
 use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
+use App\Models\User;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -31,6 +33,7 @@ class FortifyServiceProvider extends ServiceProvider
         $this->configureActions();
         $this->configureViews();
         $this->configureRateLimiting();
+        $this->configureRedirects();
     }
 
     /**
@@ -40,6 +43,28 @@ class FortifyServiceProvider extends ServiceProvider
     {
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
         Fortify::createUsersUsing(CreateNewUser::class);
+
+        // Custom authentication to distinguish admin login from normal login.
+        Fortify::authenticateUsing(function (Request $request): ?User {
+            /** @var \App\Models\User|null $user */
+            $user = User::where('email', $request->string('email'))->first();
+
+            if (! $user || ! Hash::check($request->string('password'), $user->password)) {
+                return null;
+            }
+
+            // When logging in via /admin/login, only allow the primary super admin account.
+            if ($request->boolean('admin_mode')) {
+                if ($user->email !== 'super@gmail.com') {
+                    return null;
+                }
+
+                // Remember that this login came from the admin login page.
+                $request->session()->put('login_via_admin', true);
+            }
+
+            return $user;
+        });
     }
 
     /**
@@ -86,6 +111,29 @@ class FortifyServiceProvider extends ServiceProvider
             $throttleKey = Str::transliterate(Str::lower($request->input(Fortify::username())).'|'.$request->ip());
 
             return Limit::perMinute(5)->by($throttleKey);
+        });
+    }
+
+    /**
+     * Configure post-login redirects.
+     */
+    private function configureRedirects(): void
+    {
+        Fortify::redirects('login', function () {
+            $user = auth()->user();
+            $request = request();
+
+            // If the user logged in via /admin/login, always send them to the admin dashboard.
+            if ($request->session()->pull('login_via_admin', false)) {
+                return route('admin.dashboard');
+            }
+
+            // Redirect superadmins to user management; others to admin dashboard.
+            if ($user && $user->can('manage roles')) {
+                return route('admin.users.index');
+            }
+
+            return route('admin.dashboard');
         });
     }
 }

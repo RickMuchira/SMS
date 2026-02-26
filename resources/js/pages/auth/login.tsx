@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Form, Head } from '@inertiajs/react';
+import { Eye, EyeOff } from 'lucide-react';
 import InputError from '@/components/input-error';
 import TextLink from '@/components/text-link';
 import { Button } from '@/components/ui/button';
@@ -15,28 +17,38 @@ type Props = {
     status?: string;
     canResetPassword: boolean;
     canRegister: boolean;
+    mode?: 'admin' | 'user';
 };
 
 export default function Login({
     status,
     canResetPassword,
     canRegister,
+    mode = 'user',
 }: Props) {
+    const isAdminLogin = mode === 'admin';
+    const [showPassword, setShowPassword] = useState(false);
+
     return (
         <AuthLayout
-            title="Log in to your account"
-            description="Enter your email and password below to log in"
+            title={
+                isAdminLogin ? 'Administrator sign in' : 'Log in to your account'
+            }
+            description={
+                isAdminLogin
+                    ? 'Enter your administrator email and password to access the admin panel'
+                    : 'Enter your email and password below to log in'
+            }
         >
             <Head title="Log in" />
 
-            <Form
-                {...store.form()}
-                resetOnSuccess={['password']}
-                className="flex flex-col gap-6"
-            >
+            <Form action={store()} resetOnSuccess={['password']} className="flex flex-col gap-6">
                 {({ processing, errors }) => (
                     <>
                         <div className="grid gap-6">
+                            {isAdminLogin && (
+                                <input type="hidden" name="admin_mode" value="1" />
+                            )}
                             <div className="grid gap-2">
                                 <Label htmlFor="email">Email address</Label>
                                 <Input
@@ -65,15 +77,30 @@ export default function Login({
                                         </TextLink>
                                     )}
                                 </div>
-                                <Input
-                                    id="password"
-                                    type="password"
-                                    name="password"
-                                    required
-                                    tabIndex={2}
-                                    autoComplete="current-password"
-                                    placeholder="Password"
-                                />
+                                <div className="relative">
+                                    <Input
+                                        id="password"
+                                        type={showPassword ? 'text' : 'password'}
+                                        name="password"
+                                        required
+                                        tabIndex={2}
+                                        autoComplete="current-password"
+                                        placeholder="Password"
+                                        className="pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword((prev) => !prev)}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                        {showPassword ? (
+                                            <EyeOff className="h-4 w-4" />
+                                        ) : (
+                                            <Eye className="h-4 w-4" />
+                                        )}
+                                    </button>
+                                </div>
                                 <InputError message={errors.password} />
                             </div>
 

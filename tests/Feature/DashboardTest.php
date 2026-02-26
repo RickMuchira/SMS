@@ -14,3 +14,11 @@ test('authenticated users can visit the dashboard', function () {
     $response = $this->get(route('dashboard'));
     $response->assertOk();
 });
+
+test('authenticated users can visit the admin dashboard', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $response = $this->get(route('admin.dashboard'));
+    $response->assertOk();
+});

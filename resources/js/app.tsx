@@ -4,6 +4,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../css/app.css';
 import { initializeTheme } from './hooks/use-appearance';
+import { AuthProvider } from './context/auth-context';
+import type { AuthUserWithRbacPageProps } from '@/types/auth';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
@@ -17,9 +19,17 @@ createInertiaApp({
     setup({ el, App, props }) {
         const root = createRoot(el);
 
+        const pageProps = props.initialPage.props as AuthUserWithRbacPageProps;
+
         root.render(
             <StrictMode>
-                <App {...props} />
+                <AuthProvider
+                    initialUser={pageProps.auth?.user ?? null}
+                    initialRoles={pageProps.auth?.roles ?? []}
+                    initialPermissions={pageProps.auth?.permissions ?? []}
+                >
+                    <App {...props} />
+                </AuthProvider>
             </StrictMode>,
         );
     },

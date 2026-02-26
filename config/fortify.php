@@ -73,7 +73,7 @@ return [
     |
     */
 
-    'home' => '/dashboard',
+    'home' => '/admin/dashboard',
 
     /*
     |--------------------------------------------------------------------------
@@ -144,7 +144,8 @@ return [
     */
 
     'features' => [
-        Features::registration(),
+        // Registration is now managed by super-admins only; public self-registration is disabled.
+        // Features::registration(),
         Features::resetPasswords(),
         Features::emailVerification(),
         Features::twoFactorAuthentication([
