@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SchoolClass;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 
 class SchoolClassController extends Controller
 {
@@ -38,6 +39,13 @@ class SchoolClassController extends Controller
 
         $class = SchoolClass::create($validated);
 
+        Log::info('SchoolClass created via API', [
+            'id' => $class->id,
+            'name' => $class->name,
+            'user_id' => $request->user()?->id,
+            'user_email' => $request->user()?->email,
+        ]);
+
         return response(['class' => $class], Response::HTTP_CREATED);
     }
 
@@ -62,6 +70,13 @@ class SchoolClassController extends Controller
         ]);
 
         $schoolClass->update($validated);
+
+        Log::info('SchoolClass updated via API', [
+            'id' => $schoolClass->id,
+            'validated' => $validated,
+            'user_id' => $request->user()?->id,
+            'user_email' => $request->user()?->email,
+        ]);
 
         return response(['class' => $schoolClass->fresh()], Response::HTTP_OK);
     }

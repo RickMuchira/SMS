@@ -53,9 +53,12 @@ class FortifyServiceProvider extends ServiceProvider
                 return null;
             }
 
-            // When logging in via /admin/login, only allow the primary super admin account.
+            // When logging in via /admin/login, only allow users with admin roles.
             if ($request->boolean('admin_mode')) {
-                if ($user->email !== 'super@gmail.com') {
+                // Allow super-admin, student-admin, driver-admin, etc.
+                $allowedRoles = ['super-admin', 'student-admin', 'driver-admin'];
+                
+                if (! $user->hasAnyRole($allowedRoles)) {
                     return null;
                 }
 
