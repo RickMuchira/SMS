@@ -19,7 +19,7 @@ import type { BreadcrumbItem } from '@/types';
 type SchoolClass = {
     id: number;
     name: string;
-    description?: string;
+    description?: string | null;
     students_count?: number;
     created_at: string;
     updated_at: string;
@@ -86,13 +86,15 @@ export default function AdminClassesIndex() {
                 throw new Error('CSRF token not found. Please refresh the page.');
             }
 
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+            };
+
             const res = await fetch('/admin/api/classes', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                },
+                headers,
                 credentials: 'same-origin',
                 body: JSON.stringify({
                     name: createName.trim(),
@@ -154,13 +156,15 @@ export default function AdminClassesIndex() {
                 throw new Error('CSRF token not found. Please refresh the page.');
             }
 
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+            };
+
             const res = await fetch(`/admin/api/classes/${editingId}`, {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                },
+                headers,
                 credentials: 'same-origin',
                 body: JSON.stringify({
                     name: editName.trim(),
@@ -218,13 +222,15 @@ export default function AdminClassesIndex() {
                 alert('CSRF token not found. Please refresh the page.');
                 return;
             }
-            
+
+            const headers: Record<string, string> = {
+                Accept: 'application/json',
+                ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+            };
+
             const res = await fetch(`/admin/api/classes/${cls.id}`, {
                 method: 'DELETE',
-                headers: {
-                    Accept: 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                },
+                headers,
                 credentials: 'same-origin',
             });
             
