@@ -12,10 +12,10 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { usePermissions } from '@/hooks/use-permissions';
+import { dashboard as adminDashboard } from '@/routes/admin';
 import type { NavItem } from '@/types';
 import AppLogo from './app-logo';
-import { dashboard as adminDashboard } from '@/routes/admin';
-import { usePermissions } from '@/hooks/use-permissions';
 
 const footerNavItems: NavItem[] = [
     {

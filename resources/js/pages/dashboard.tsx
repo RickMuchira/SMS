@@ -1,13 +1,13 @@
 import { Head, Link, usePage } from '@inertiajs/react';
 import { ArrowRight, LayoutGrid, Shield } from 'lucide-react';
-import { PlaceholderPattern } from '@/components/ui/placeholder-pattern';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PlaceholderPattern } from '@/components/ui/placeholder-pattern';
+import { usePermissions } from '@/hooks/use-permissions';
 import AppLayout from '@/layouts/app-layout';
-import type { BreadcrumbItem } from '@/types';
 import { dashboard as adminDashboard } from '@/routes/admin';
 import { index as adminUsersIndex } from '@/routes/admin/users';
-import { usePermissions } from '@/hooks/use-permissions';
+import type { BreadcrumbItem } from '@/types';
 
 const breadcrumbs: BreadcrumbItem[] = [
     {

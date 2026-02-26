@@ -12,6 +12,6 @@ class VerifyCsrfToken extends Middleware
      * @var array<int, string>
      */
     protected $except = [
-        //
+        // You can keep this array empty now that all fetch calls are sending X-CSRF-TOKEN.
     ];
 }

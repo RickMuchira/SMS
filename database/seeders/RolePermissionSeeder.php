@@ -90,7 +90,12 @@ class RolePermissionSeeder extends Seeder
         $superAdminRole->syncPermissions($createdPermissions);
 
         $studentAdminRole->syncPermissions(
-            Permission::whereIn('name', ['view students', 'manage students'])->get()
+            Permission::whereIn('name', [
+                'view students',
+                'manage students',
+                'view classes',
+                'manage classes',
+            ])->get()
         );
 
         $driverAdminRole->syncPermissions(

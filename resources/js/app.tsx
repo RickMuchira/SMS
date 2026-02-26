@@ -3,9 +3,9 @@ import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../css/app.css';
-import { initializeTheme } from './hooks/use-appearance';
-import { AuthProvider } from './context/auth-context';
 import type { AuthUserWithRbacPageProps } from '@/types/auth';
+import { AuthProvider } from './context/auth-context';
+import { initializeTheme } from './hooks/use-appearance';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 

@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Head } from '@inertiajs/react';
 import { Eye, EyeOff } from 'lucide-react';
-import AppLayout from '@/layouts/app-layout';
-import type { BreadcrumbItem, User } from '@/types';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { getCsrfToken } from '@/lib/csrf';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     Dialog,
     DialogContent,
@@ -15,7 +11,11 @@ import {
     DialogTitle,
     DialogFooter,
 } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import AppLayout from '@/layouts/app-layout';
+import { getCsrfToken } from '@/lib/csrf';
+import type { BreadcrumbItem, User } from '@/types';
 
 type ManagedUser = User & {
     roles?: { name: string }[];

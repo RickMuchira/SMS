@@ -1,6 +1,6 @@
 import { Head, Link, usePage } from '@inertiajs/react';
-import { dashboard as adminDashboard } from '@/routes/admin';
 import { login, register } from '@/routes';
+import { dashboard as adminDashboard } from '@/routes/admin';
 
 export default function Welcome({
     canRegister = true,
