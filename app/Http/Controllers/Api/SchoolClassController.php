@@ -52,41 +52,41 @@ class SchoolClassController extends Controller
     /**
      * Display the specified class.
      */
-    public function show(SchoolClass $schoolClass): Response
+    public function show(SchoolClass $class): Response
     {
-        $schoolClass->loadCount('students');
+        $class->loadCount('students');
 
-        return response(['class' => $schoolClass], Response::HTTP_OK);
+        return response(['class' => $class], Response::HTTP_OK);
     }
 
     /**
      * Update the specified class.
      */
-    public function update(Request $request, SchoolClass $schoolClass): Response
+    public function update(Request $request, SchoolClass $class): Response
     {
         $validated = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255', 'unique:school_classes,name,'.$schoolClass->id],
+            'name' => ['sometimes', 'string', 'max:255', 'unique:school_classes,name,'.$class->id],
             'description' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $schoolClass->update($validated);
+        $class->update($validated);
 
         Log::info('SchoolClass updated via API', [
-            'id' => $schoolClass->id,
+            'id' => $class->id,
             'validated' => $validated,
             'user_id' => $request->user()?->id,
             'user_email' => $request->user()?->email,
         ]);
 
-        return response(['class' => $schoolClass->fresh()], Response::HTTP_OK);
+        return response(['class' => $class->fresh()], Response::HTTP_OK);
     }
 
     /**
      * Remove the specified class.
      */
-    public function destroy(SchoolClass $schoolClass): Response
+    public function destroy(SchoolClass $class): Response
     {
-        $schoolClass->delete();
+        $class->delete();
 
         return response()->noContent();
     }
