@@ -13,6 +13,8 @@ class SchoolClass extends Model
     protected $fillable = [
         'name',
         'description',
+        'base_fee',
+        'uniform_fee',
     ];
 
     public function students(): HasMany

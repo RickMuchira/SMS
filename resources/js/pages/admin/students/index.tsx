@@ -1,8 +1,9 @@
 import { Head } from '@inertiajs/react';
-import { Eye, EyeOff } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     Dialog,
     DialogContent,
@@ -12,7 +13,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { usePermissions } from '@/hooks/use-permissions';
+import { getCsrfToken } from '@/lib/csrf';
 import AppLayout from '@/layouts/app-layout';
 import type { BreadcrumbItem, User } from '@/types';
 
@@ -21,9 +24,16 @@ type SchoolClass = {
     name: string;
 };
 
+type ExtraGuardian = {
+    name: string;
+    phone: string;
+    relationship: string;
+};
+
 type ManagedUser = User & {
     roles?: { name: string }[];
     school_class?: SchoolClass;
+    extra_guardians?: ExtraGuardian[];
 };
 
 type PaginatedResponse = {
@@ -66,6 +76,7 @@ export default function AdminStudentsIndex() {
     const [showPassword, setShowPassword] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [extraGuardians, setExtraGuardians] = useState<ExtraGuardian[]>([]);
 
     // Auto-generate email from name
     const generatedEmail = useMemo(() => generateEmailFromName(name), [name]);
@@ -81,32 +92,52 @@ export default function AdminStudentsIndex() {
     const [editGuardianRelationship, setEditGuardianRelationship] = useState('');
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
+    const [editExtraGuardians, setEditExtraGuardians] = useState<ExtraGuardian[]>([]);
 
     // CSV import state
     const [importing, setImporting] = useState(false);
+    const [importProgress, setImportProgress] = useState(0);
     const [importResult, setImportResult] = useState<{
         created: number;
         updated: number;
         errors: string[];
     } | null>(null);
+    
+    // Full student list state (for bottom section)
+    const [allStudents, setAllStudents] = useState<ManagedUser[]>([]);
+    const [loadingAll, setLoadingAll] = useState(false);
 
-    // Fetch classes
+    // Duplicate detection state
+    const [duplicateGroups, setDuplicateGroups] = useState<ManagedUser[][]>([]);
+    const [loadingDuplicates, setLoadingDuplicates] = useState(false);
+    const [selectedDuplicateIds, setSelectedDuplicateIds] = useState<Set<number>>(new Set());
+    const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+
+    // Fetch classes (uses admin API so student-admins with "manage classes" can access)
     useEffect(() => {
-        fetch('/api/classes', {
+        fetch('/admin/api/classes', {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         })
-            .then((res) => res.json())
-            .then((data: PaginatedResponse & { data: SchoolClass[] }) => {
+            .then((res) => {
+                if (!res.ok) {
+                    throw new Error('Failed to load classes');
+                }
+
+                return res.json();
+            })
+            .then((data: { data: SchoolClass[] }) => {
                 setClasses(data.data ?? []);
             })
-            .catch(() => {});
+            .catch(() => {
+                setClasses([]);
+            });
     }, []);
 
     const fetchList = useCallback(async () => {
         const params = new URLSearchParams();
         if (search) params.set('search', search);
-        const response = await fetch(`/api/students?${params}`, {
+        const response = await fetch(`/admin/api/students?${params}`, {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         });
@@ -114,6 +145,26 @@ export default function AdminStudentsIndex() {
         const payload = (await response.json()) as PaginatedResponse;
         return payload.data ?? [];
     }, [search]);
+
+    const fetchAllStudents = useCallback(async () => {
+        const response = await fetch('/admin/api/students', {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Failed to load students');
+        const payload = (await response.json()) as PaginatedResponse;
+        return payload.data ?? [];
+    }, []);
+
+    const fetchDuplicates = useCallback(async () => {
+        const response = await fetch('/admin/api/students/duplicates', {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Failed to load duplicates');
+        const payload = (await response.json()) as { data: ManagedUser[][] };
+        return payload.data ?? [];
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -133,11 +184,63 @@ export default function AdminStudentsIndex() {
         };
     }, [fetchList]);
 
+    // Load all students initially for the bottom section
+    useEffect(() => {
+        let cancelled = false;
+        setLoadingAll(true);
+        fetchAllStudents()
+            .then((data) => {
+                if (!cancelled) setAllStudents(data);
+            })
+            .catch(() => {
+                if (!cancelled) console.error('Unable to load all students.');
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingAll(false);
+            });
+        return () => { cancelled = true; };
+    }, [fetchAllStudents]);
+
+    // Load duplicate groups
+    useEffect(() => {
+        let cancelled = false;
+        setLoadingDuplicates(true);
+        fetchDuplicates()
+            .then((data) => {
+                if (!cancelled) {
+                    setDuplicateGroups(data);
+                    setSelectedDuplicateIds(new Set());
+                }
+            })
+            .catch(() => {
+                if (!cancelled) setDuplicateGroups([]);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingDuplicates(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchDuplicates]);
+
+    // Combine search results and all students for display
+    const displayedStudents = useMemo(() => {
+        if (search && list.length > 0) {
+            // Show search results first, then remaining students
+            const searchIds = new Set(list.map(s => s.id));
+            const remaining = allStudents.filter(s => !searchIds.has(s.id));
+            return [...list, ...remaining];
+        }
+        return allStudents;
+    }, [search, list, allStudents]);
+
     async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setSubmitting(true);
         setError(null);
         try {
+            const csrf = getCsrfToken();
+
             const body: Record<string, unknown> = {
                 name,
             };
@@ -146,9 +249,24 @@ export default function AdminStudentsIndex() {
             if (guardianPhone) body.guardian_phone = guardianPhone;
             if (guardianRelationship) body.guardian_relationship = guardianRelationship;
 
-            const res = await fetch('/api/students', {
+            const cleanedExtra = extraGuardians
+                .map((g) => ({
+                    name: g.name.trim(),
+                    phone: g.phone.trim(),
+                    relationship: g.relationship,
+                }))
+                .filter((g) => g.name || g.phone || g.relationship);
+            if (cleanedExtra.length > 0) {
+                body.extra_guardians = cleanedExtra;
+            }
+
+            const res = await fetch('/admin/api/students', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
                 credentials: 'same-origin',
                 body: JSON.stringify(body),
             });
@@ -163,6 +281,7 @@ export default function AdminStudentsIndex() {
             setGuardianName('');
             setGuardianPhone('');
             setGuardianRelationship('');
+            setExtraGuardians([]);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
         } finally {
@@ -179,6 +298,7 @@ export default function AdminStudentsIndex() {
         setEditGuardianName(user.guardian_name ?? '');
         setEditGuardianPhone(user.guardian_phone ?? '');
         setEditGuardianRelationship(user.guardian_relationship ?? '');
+        setEditExtraGuardians(user.extra_guardians ?? []);
         setEditError(null);
     }
 
@@ -188,6 +308,8 @@ export default function AdminStudentsIndex() {
         setEditSubmitting(true);
         setEditError(null);
         try {
+            const csrf = getCsrfToken();
+
             const body: Record<string, unknown> = {
                 name: editName,
                 email: editEmail,
@@ -198,9 +320,24 @@ export default function AdminStudentsIndex() {
             body.guardian_phone = editGuardianPhone || null;
             body.guardian_relationship = editGuardianRelationship || null;
 
-            const res = await fetch(`/api/students/${editing.id}`, {
+            const cleanedExtra = editExtraGuardians
+                .map((g) => ({
+                    name: g.name.trim(),
+                    phone: g.phone.trim(),
+                    relationship: g.relationship,
+                }))
+                .filter((g) => g.name || g.phone || g.relationship);
+            if (cleanedExtra.length > 0) {
+                body.extra_guardians = cleanedExtra;
+            }
+
+            const res = await fetch(`/admin/api/students/${editing.id}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
                 credentials: 'same-origin',
                 body: JSON.stringify(body),
             });
@@ -221,13 +358,72 @@ export default function AdminStudentsIndex() {
     async function handleDelete(user: ManagedUser) {
         if (!canManage || !window.confirm(`Delete student "${user.name}"? This will remove their account.`)) return;
         try {
-            const res = await fetch(`/api/students/${user.id}`, {
+            const csrf = getCsrfToken();
+            const res = await fetch(`/admin/api/students/${user.id}`, {
                 method: 'DELETE',
+                headers: {
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
                 credentials: 'same-origin',
             });
-            if (res.ok) setList((prev) => prev.filter((u) => u.id !== user.id));
+            if (res.ok) {
+                setList((prev) => prev.filter((u) => u.id !== user.id));
+                setAllStudents((prev) => prev.filter((u) => u.id !== user.id));
+                fetchDuplicates().then(setDuplicateGroups);
+            }
         } catch {
             setError('Failed to delete student.');
+        }
+    }
+
+    function toggleDuplicateSelection(id: number) {
+        setSelectedDuplicateIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
+    function selectAllDuplicates(keepFirst: boolean) {
+        const ids = new Set<number>();
+        duplicateGroups.forEach((group) => {
+            const sorted = [...group].sort((a, b) => (a.email < b.email ? -1 : 1));
+            (keepFirst ? sorted.slice(1) : sorted).forEach((u) => ids.add(u.id));
+        });
+        setSelectedDuplicateIds(ids);
+    }
+
+    async function handleBulkDeleteDuplicates() {
+        if (!canManage || selectedDuplicateIds.size === 0) return;
+        if (!window.confirm(`Delete ${selectedDuplicateIds.size} duplicate student(s)? This cannot be undone.`)) return;
+        setDeletingDuplicates(true);
+        setError(null);
+        try {
+            const csrf = getCsrfToken();
+            const res = await fetch('/admin/api/students/bulk', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ ids: Array.from(selectedDuplicateIds) }),
+            });
+            if (!res.ok) throw new Error('Failed to delete');
+            await res.json();
+            const idsToDelete = Array.from(selectedDuplicateIds);
+            setSelectedDuplicateIds(new Set());
+            setList((prev) => prev.filter((u) => !idsToDelete.includes(u.id)));
+            setAllStudents((prev) => prev.filter((u) => !idsToDelete.includes(u.id)));
+            const groups = await fetchDuplicates();
+            setDuplicateGroups(groups);
+        } catch {
+            setError('Failed to delete duplicate students.');
+        } finally {
+            setDeletingDuplicates(false);
         }
     }
 
@@ -235,15 +431,34 @@ export default function AdminStudentsIndex() {
         e.preventDefault();
         const formData = new FormData(e.currentTarget);
         setImporting(true);
+        setImportProgress(0);
         setImportResult(null);
         setError(null);
 
         try {
-            const res = await fetch('/api/students/import', {
+            const csrf = getCsrfToken();
+            
+            // Simulate progress animation
+            const progressInterval = setInterval(() => {
+                setImportProgress(prev => {
+                    if (prev >= 90) return prev;
+                    return prev + 10;
+                });
+            }, 200);
+
+            const res = await fetch('/admin/api/students/import', {
                 method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
                 credentials: 'same-origin',
                 body: formData,
             });
+            
+            clearInterval(progressInterval);
+            setImportProgress(100);
+            
             if (!res.ok) {
                 const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
                 throw new Error(errBody?.message ?? 'Failed to import CSV');
@@ -254,12 +469,15 @@ export default function AdminStudentsIndex() {
                 errors: string[];
             };
             setImportResult(result);
-            // Refresh list
+            // Refresh lists and duplicates
             fetchList().then(setList);
+            fetchAllStudents().then(setAllStudents);
+            fetchDuplicates().then(setDuplicateGroups);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
         } finally {
             setImporting(false);
+            setTimeout(() => setImportProgress(0), 1000);
         }
     }
 
@@ -321,7 +539,7 @@ export default function AdminStudentsIndex() {
                                             type={showPassword ? 'text' : 'password'}
                                             value={guardianPhone}
                                             onChange={(e) => setGuardianPhone(e.target.value)}
-                                            placeholder="e.g. super@gmail.com"
+                                            placeholder="e.g. 0712345678"
                                             required
                                         />
                                         <button
@@ -334,7 +552,9 @@ export default function AdminStudentsIndex() {
                                         </button>
                                     </div>
                                     <p className="text-xs text-muted-foreground">
-                                        This will be used as the password. Parents log in with this.
+                                        Enter the local phone number starting with 0 (for example 0712345678).
+                                        This exact value will be stored and used as the parent&apos;s login identifier
+                                        and as the initial password.
                                     </p>
                                 </div>
                                 <div className="space-y-2">
@@ -366,6 +586,103 @@ export default function AdminStudentsIndex() {
                                         Automatically generated from student name
                                     </p>
                                 </div>
+                                <div className="md:col-span-2 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <Label>Additional guardians (optional)</Label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() =>
+                                                setExtraGuardians((prev) => [
+                                                    ...prev,
+                                                    { name: '', phone: '', relationship: '' },
+                                                ])
+                                            }
+                                        >
+                                            Add guardian
+                                        </Button>
+                                    </div>
+                                    {extraGuardians.length > 0 && (
+                                        <div className="space-y-3 border rounded-md p-3">
+                                            {extraGuardians.map((g, index) => (
+                                                <div
+                                                    key={index}
+                                                    className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                                >
+                                                    <Input
+                                                        placeholder="Guardian name"
+                                                        value={g.name}
+                                                        onChange={(e) =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.map((item, i) =>
+                                                                    i === index
+                                                                        ? {
+                                                                              ...item,
+                                                                              name: e.target.value,
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            )
+                                                        }
+                                                    />
+                                                    <Input
+                                                        placeholder="Phone e.g. 0712345678"
+                                                        value={g.phone}
+                                                        onChange={(e) =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.map((item, i) =>
+                                                                    i === index
+                                                                        ? {
+                                                                              ...item,
+                                                                              phone: e.target.value,
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            )
+                                                        }
+                                                    />
+                                                    <select
+                                                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                        value={g.relationship}
+                                                        onChange={(e) =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.map((item, i) =>
+                                                                    i === index
+                                                                        ? {
+                                                                              ...item,
+                                                                              relationship: e.target.value,
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            )
+                                                        }
+                                                    >
+                                                        <option value="">Relationship</option>
+                                                        {GUARDIAN_RELATIONSHIPS.map((rel) => (
+                                                            <option key={rel} value={rel}>
+                                                                {rel}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-red-600 hover:text-red-700"
+                                                        onClick={() =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.filter((_, i) => i !== index),
+                                                            )
+                                                        }
+                                                    >
+                                                        Remove
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="md:col-span-2 flex items-center gap-4">
                                     <Button type="submit" disabled={submitting}>
                                         {submitting ? 'Creating...' : 'Create student'}
@@ -382,7 +699,7 @@ export default function AdminStudentsIndex() {
                         <CardHeader>
                             <CardTitle>Import students from CSV</CardTitle>
                             <p className="text-sm text-muted-foreground">
-                                Upload a CSV with columns: full_name, class_name, guardian_name, guardian_phone, guardian_relationship
+                                Upload a CSV or Excel (.xlsx) file. First row must include: full_name (required), then any of class_name, guardian_name, guardian_phone, guardian_relationship
                             </p>
                         </CardHeader>
                         <CardContent>
@@ -393,10 +710,19 @@ export default function AdminStudentsIndex() {
                                         id="csv-file"
                                         name="file"
                                         type="file"
-                                        accept=".csv"
+                                        accept=".csv,.xlsx,.xls"
                                         required
                                     />
                                 </div>
+                                {importing && importProgress > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between text-sm">
+                                            <span className="text-muted-foreground">Importing...</span>
+                                            <span className="font-medium">{importProgress}%</span>
+                                        </div>
+                                        <Progress value={importProgress} />
+                                    </div>
+                                )}
                                 <Button type="submit" disabled={importing}>
                                     {importing ? 'Importing...' : 'Upload & import'}
                                 </Button>
@@ -421,11 +747,109 @@ export default function AdminStudentsIndex() {
                     </Card>
                 )}
 
+                {(canManage || duplicateGroups.length > 0) && (
+                    <Card className="border-amber-200 dark:border-amber-800">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <AlertTriangle className="size-5 text-amber-600 dark:text-amber-500" />
+                                Potential duplicates
+                            </CardTitle>
+                            <p className="text-sm text-muted-foreground">
+                                These students share the same name and may be duplicates. Select the ones to delete and click
+                                &quot;Delete selected&quot;. Or use &quot;Select all duplicates (keep first)&quot; to mark all
+                                but the first in each group for deletion.
+                            </p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {loadingDuplicates ? (
+                                <p className="text-sm text-muted-foreground">Checking for duplicates...</p>
+                            ) : duplicateGroups.length === 0 ? (
+                                <p className="text-sm text-green-600 dark:text-green-500">No duplicates found.</p>
+                            ) : (
+                                <>
+                                    {canManage && (
+                                        <div className="flex flex-wrap gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => selectAllDuplicates(true)}
+                                            >
+                                                Select all duplicates (keep first per group)
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setSelectedDuplicateIds(new Set())}
+                                            >
+                                                Clear selection
+                                            </Button>
+                                            {selectedDuplicateIds.size > 0 && (
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    disabled={deletingDuplicates}
+                                                    onClick={handleBulkDeleteDuplicates}
+                                                >
+                                                    {deletingDuplicates ? 'Deleting...' : `Delete selected (${selectedDuplicateIds.size})`}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    )}
+                                    <div className="space-y-4">
+                                        {duplicateGroups.map((group, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="rounded-md border border-amber-200 dark:border-amber-800 p-4 space-y-2"
+                                            >
+                                                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                                    {group.length} duplicate{group.length > 1 ? 's' : ''}: {group[0]?.name}
+                                                </p>
+                                                <div className="space-y-2">
+                                                    {group.map((u) => (
+                                                        <div
+                                                            key={u.id}
+                                                            className="flex items-center gap-4 p-2 rounded bg-muted/50 text-sm"
+                                                        >
+                                                            {canManage && (
+                                                                <Checkbox
+                                                                    checked={selectedDuplicateIds.has(u.id)}
+                                                                    onCheckedChange={() => toggleDuplicateSelection(u.id)}
+                                                                />
+                                                            )}
+                                                            <span className="font-medium">{u.name}</span>
+                                                            <span className="text-muted-foreground">{u.email}</span>
+                                                            <span className="text-muted-foreground">
+                                                                {u.school_class?.name ?? '—'}
+                                                            </span>
+                                                            {canManage && (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="text-red-600 hover:text-red-700 ml-auto"
+                                                                    onClick={() => handleDelete(u)}
+                                                                >
+                                                                    Delete
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
+
                 <Card>
                     <CardHeader>
                         <CardTitle>Students</CardTitle>
                         <p className="text-sm text-muted-foreground">
-                            Parents can log in using their phone number.
+                            {search && list.length > 0
+                                ? `Showing ${list.length} search result${list.length !== 1 ? 's' : ''} (highlighted) • ${allStudents.length} total students` 
+                                : `All students (${allStudents.length} total)`}
                         </p>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -443,10 +867,19 @@ export default function AdminStudentsIndex() {
                             >
                                 Search
                             </Button>
+                            {search && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => setSearch('')}
+                                >
+                                    Clear
+                                </Button>
+                            )}
                         </div>
-                        {loading ? (
+                        {loading || loadingAll ? (
                             <p className="text-sm text-muted-foreground">Loading...</p>
-                        ) : list.length === 0 ? (
+                        ) : displayedStudents.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No students found.</p>
                         ) : (
                             <div className="overflow-x-auto">
@@ -461,39 +894,60 @@ export default function AdminStudentsIndex() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {list.map((user) => (
-                                            <tr key={user.id} className="border-b last:border-0">
-                                                <td className="py-2 pr-4">{user.name}</td>
-                                                <td className="py-2 pr-4 text-sm text-muted-foreground">{user.email}</td>
-                                                <td className="py-2 pr-4">{user.school_class?.name ?? '—'}</td>
-                                                <td className="py-2 pr-4 text-sm">
-                                                    {user.guardian_name && user.guardian_phone
-                                                        ? `${user.guardian_name} (${user.guardian_phone})`
-                                                        : user.guardian_phone || '—'}
-                                                </td>
-                                                {canManage && (
-                                                    <td className="py-2 pr-4 flex gap-2">
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            onClick={() => openEdit(user)}
-                                                        >
-                                                            Edit
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="text-red-600 hover:text-red-700"
-                                                            onClick={() => handleDelete(user)}
-                                                        >
-                                                            Delete
-                                                        </Button>
+                                        {displayedStudents.map((user, index) => {
+                                            const isSearchResult = search && index < list.length;
+                                            return (
+                                                <tr 
+                                                    key={user.id} 
+                                                    className={`border-b last:border-0 ${isSearchResult ? 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' : ''}`}
+                                                >
+                                                    <td className="py-2 pr-4 font-medium">{user.name}</td>
+                                                    <td className="py-2 pr-4 text-sm text-muted-foreground">{user.email}</td>
+                                                    <td className="py-2 pr-4">{user.school_class?.name ?? '—'}</td>
+                                                    <td className="py-2 pr-4 text-sm">
+                                                        <div className="space-y-1">
+                                                            <div>
+                                                                {user.guardian_name && user.guardian_phone
+                                                                    ? `${user.guardian_name} (${user.guardian_phone})`
+                                                                    : user.guardian_phone || '—'}
+                                                            </div>
+                                                            {user.extra_guardians && user.extra_guardians.length > 0 && (
+                                                                <div className="text-xs text-muted-foreground space-y-0.5">
+                                                                    {user.extra_guardians.map((g, i) => (
+                                                                        <div key={i}>
+                                                                            {g.name || 'Guardian'}{' '}
+                                                                            {g.phone ? `(${g.phone})` : ''}
+                                                                            {g.relationship ? ` – ${g.relationship}` : ''}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </td>
-                                                )}
-                                            </tr>
-                                        ))}
+                                                    {canManage && (
+                                                        <td className="py-2 pr-4 flex gap-2">
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={() => openEdit(user)}
+                                                            >
+                                                                Edit
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="text-red-600 hover:text-red-700"
+                                                                onClick={() => handleDelete(user)}
+                                                            >
+                                                                Delete
+                                                            </Button>
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -584,6 +1038,94 @@ export default function AdminStudentsIndex() {
                                     value={editPassword}
                                     onChange={(e) => setEditPassword(e.target.value)}
                                 />
+                            </div>
+                            <div className="md:col-span-2 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <Label>Additional guardians (optional)</Label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                            setEditExtraGuardians((prev) => [
+                                                ...prev,
+                                                { name: '', phone: '', relationship: '' },
+                                            ])
+                                        }
+                                    >
+                                        Add guardian
+                                    </Button>
+                                </div>
+                                {editExtraGuardians.length > 0 && (
+                                    <div className="space-y-3 border rounded-md p-3">
+                                        {editExtraGuardians.map((g, index) => (
+                                            <div
+                                                key={index}
+                                                className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                            >
+                                                <Input
+                                                    placeholder="Guardian name"
+                                                    value={g.name}
+                                                    onChange={(e) =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.map((item, i) =>
+                                                                i === index
+                                                                    ? { ...item, name: e.target.value }
+                                                                    : item,
+                                                            ),
+                                                        )
+                                                    }
+                                                />
+                                                <Input
+                                                    placeholder="Phone e.g. 0712345678"
+                                                    value={g.phone}
+                                                    onChange={(e) =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.map((item, i) =>
+                                                                i === index
+                                                                    ? { ...item, phone: e.target.value }
+                                                                    : item,
+                                                            ),
+                                                        )
+                                                    }
+                                                />
+                                                <select
+                                                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                    value={g.relationship}
+                                                    onChange={(e) =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.map((item, i) =>
+                                                                i === index
+                                                                    ? { ...item, relationship: e.target.value }
+                                                                    : item,
+                                                            ),
+                                                        )
+                                                    }
+                                                >
+                                                    <option value="">Relationship</option>
+                                                    {GUARDIAN_RELATIONSHIPS.map((rel) => (
+                                                        <option key={rel} value={rel}>
+                                                            {rel}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-red-600 hover:text-red-700"
+                                                    onClick={() =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.filter((_, i) => i !== index),
+                                                        )
+                                                    }
+                                                >
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                         {editError && <p className="text-sm text-red-500">{editError}</p>}

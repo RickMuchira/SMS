@@ -88,7 +88,7 @@ export function AppSidebar() {
             ? [
                   {
                       title: 'Fees',
-                      href: '/fees',
+                      href: '/admin/fees',
                       icon: FileText,
                   } satisfies NavItem,
               ]

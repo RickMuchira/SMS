@@ -23,7 +23,13 @@ class AdminUserController extends Controller
             $query->role($request->string('role'));
         }
 
-        $users = $query->orderBy('name')->paginate(50);
+        $perPage = (int) $request->input('per_page', 50);
+        // Cap page size to avoid accidental huge responses
+        if ($perPage < 1 || $perPage > 10000) {
+            $perPage = 50;
+        }
+
+        $users = $query->orderBy('name')->paginate($perPage);
 
         return response($users, Response::HTTP_OK);
     }

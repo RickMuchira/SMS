@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Head } from '@inertiajs/react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
     Dialog,
     DialogContent,
@@ -14,13 +20,35 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/app-layout';
 import { getCsrfToken } from '@/lib/csrf';
+import { usePermissions } from '@/hooks/use-permissions';
 import type { BreadcrumbItem } from '@/types';
+
+const GUARDIAN_RELATIONSHIPS = ['Father', 'Mother', 'Guardian', 'Other'];
+
+type ExtraGuardian = {
+    name: string;
+    phone: string;
+    relationship: string;
+};
+
+type Student = {
+    id: number;
+    name: string;
+    email: string;
+    class_id?: number | null;
+    guardian_name?: string | null;
+    guardian_phone?: string | null;
+    guardian_relationship?: string | null;
+    extra_guardians?: ExtraGuardian[];
+    school_class?: SchoolClass;
+};
 
 type SchoolClass = {
     id: number;
     name: string;
     description?: string | null;
     students_count?: number;
+    students?: Student[];
     created_at: string;
     updated_at: string;
 };
@@ -35,9 +63,27 @@ const breadcrumbs: BreadcrumbItem[] = [
 ];
 
 export default function AdminClassesIndex() {
+    const { hasPermission } = usePermissions();
+    const canManageStudents = hasPermission('manage students');
+
     const [list, setList] = useState<SchoolClass[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [expandedClasses, setExpandedClasses] = useState<Set<number>>(new Set());
+    const [loadingStudents, setLoadingStudents] = useState<Set<number>>(new Set());
+    
+    // Edit student state
+    const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+    const [editStudentName, setEditStudentName] = useState('');
+    const [editStudentEmail, setEditStudentEmail] = useState('');
+    const [editStudentPassword, setEditStudentPassword] = useState('');
+    const [editStudentClassId, setEditStudentClassId] = useState('');
+    const [editStudentGuardianName, setEditStudentGuardianName] = useState('');
+    const [editStudentGuardianPhone, setEditStudentGuardianPhone] = useState('');
+    const [editStudentGuardianRelationship, setEditStudentGuardianRelationship] = useState('');
+    const [editStudentExtraGuardians, setEditStudentExtraGuardians] = useState<ExtraGuardian[]>([]);
+    const [editStudentSubmitting, setEditStudentSubmitting] = useState(false);
+    const [editStudentError, setEditStudentError] = useState<string | null>(null);
     
     // Create form state
     const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -69,6 +115,49 @@ export default function AdminClassesIndex() {
             console.error('Failed to fetch classes:', error);
         }
     }, [search]);
+
+    async function fetchStudentsForClass(classId: number) {
+        if (loadingStudents.has(classId)) return;
+        
+        setLoadingStudents(prev => new Set(prev).add(classId));
+        try {
+            const response = await fetch(`/admin/api/students?class_id=${classId}`, {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            });
+            if (!response.ok) throw new Error('Failed to load students');
+            const payload = await response.json();
+            const students = payload.data ?? [];
+            
+            setList(prev => prev.map(cls => 
+                cls.id === classId ? { ...cls, students } : cls
+            ));
+        } catch (error) {
+            console.error('Failed to fetch students:', error);
+        } finally {
+            setLoadingStudents(prev => {
+                const next = new Set(prev);
+                next.delete(classId);
+                return next;
+            });
+        }
+    }
+
+    function toggleClass(classId: number) {
+        setExpandedClasses(prev => {
+            const next = new Set(prev);
+            if (next.has(classId)) {
+                next.delete(classId);
+            } else {
+                next.add(classId);
+                const cls = list.find(c => c.id === classId);
+                if (cls && !cls.students) {
+                    fetchStudentsForClass(classId);
+                }
+            }
+            return next;
+        });
+    }
 
     useEffect(() => {
         setLoading(true);
@@ -211,6 +300,90 @@ export default function AdminClassesIndex() {
         }
     }
 
+    function openEditStudentDialog(student: Student) {
+        setEditingStudent(student);
+        setEditStudentName(student.name);
+        setEditStudentEmail(student.email);
+        setEditStudentPassword('');
+        setEditStudentClassId(student.class_id?.toString() ?? '');
+        setEditStudentGuardianName(student.guardian_name ?? '');
+        setEditStudentGuardianPhone(student.guardian_phone ?? '');
+        setEditStudentGuardianRelationship(student.guardian_relationship ?? '');
+        setEditStudentExtraGuardians(student.extra_guardians ?? []);
+        setEditStudentError(null);
+    }
+
+    function closeEditStudentDialog() {
+        setEditingStudent(null);
+        setEditStudentName('');
+        setEditStudentEmail('');
+        setEditStudentPassword('');
+        setEditStudentClassId('');
+        setEditStudentGuardianName('');
+        setEditStudentGuardianPhone('');
+        setEditStudentGuardianRelationship('');
+        setEditStudentExtraGuardians([]);
+        setEditStudentError(null);
+    }
+
+    async function handleEditStudent(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!editingStudent) return;
+        setEditStudentSubmitting(true);
+        setEditStudentError(null);
+        try {
+            const csrf = getCsrfToken();
+            const body: Record<string, unknown> = {
+                name: editStudentName,
+                email: editStudentEmail,
+            };
+            if (editStudentPassword) body.password = editStudentPassword;
+            if (editStudentClassId) body.class_id = parseInt(editStudentClassId);
+            body.guardian_name = editStudentGuardianName || null;
+            body.guardian_phone = editStudentGuardianPhone || null;
+            body.guardian_relationship = editStudentGuardianRelationship || null;
+            const cleanedExtra = editStudentExtraGuardians
+                .map((g) => ({
+                    name: g.name.trim(),
+                    phone: g.phone.trim(),
+                    relationship: g.relationship,
+                }))
+                .filter((g) => g.name || g.phone || g.relationship);
+            if (cleanedExtra.length > 0) body.extra_guardians = cleanedExtra;
+
+            const res = await fetch(`/admin/api/students/${editingStudent.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify(body),
+            });
+            if (!res.ok) {
+                const data = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(data?.message ?? 'Failed to update student');
+            }
+            const { user: updated } = (await res.json()) as { user: Student };
+            setList((prev) =>
+                prev.map((cls) =>
+                    cls.students
+                        ? {
+                              ...cls,
+                              students: cls.students.map((s) => (s.id === updated.id ? updated : s)),
+                          }
+                        : cls,
+                ),
+            );
+            closeEditStudentDialog();
+        } catch (err) {
+            setEditStudentError(err instanceof Error ? err.message : 'Failed to update student.');
+        } finally {
+            setEditStudentSubmitting(false);
+        }
+    }
+
     async function handleDelete(cls: SchoolClass) {
         if (!window.confirm(`Delete class "${cls.name}"? Students in this class will no longer have a class assigned.`)) {
             return;
@@ -290,49 +463,103 @@ export default function AdminClassesIndex() {
                                 No classes found. Click "Create Class" to add one.
                             </p>
                         ) : (
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="border-b text-left">
-                                            <th className="py-2 pr-4">Name</th>
-                                            <th className="py-2 pr-4">Description</th>
-                                            <th className="py-2 pr-4">Students</th>
-                                            <th className="py-2 pr-4">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {list.map((cls) => (
-                                            <tr key={cls.id} className="border-b last:border-0">
-                                                <td className="py-2 pr-4 font-medium">{cls.name}</td>
-                                                <td className="py-2 pr-4 text-muted-foreground">
-                                                    {cls.description || '—'}
-                                                </td>
-                                                <td className="py-2 pr-4">{cls.students_count ?? 0}</td>
-                                                <td className="py-2 pr-4">
-                                                    <div className="flex gap-2">
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            onClick={() => openEditDialog(cls)}
-                                                        >
-                                                            Edit
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="text-red-600 hover:text-red-700"
-                                                            onClick={() => handleDelete(cls)}
-                                                        >
-                                                            Delete
-                                                        </Button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                            <div className="space-y-2">
+                                {list.map((cls) => (
+                                    <Collapsible
+                                        key={cls.id}
+                                        open={expandedClasses.has(cls.id)}
+                                        onOpenChange={() => toggleClass(cls.id)}
+                                    >
+                                        <div className="border rounded-md">
+                                            <div className="flex items-center gap-4 p-4">
+                                                <CollapsibleTrigger asChild>
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="sm" 
+                                                        className="h-8 w-8 p-0 hover:bg-muted"
+                                                    >
+                                                        {expandedClasses.has(cls.id) ? (
+                                                            <ChevronDown className="h-5 w-5" />
+                                                        ) : (
+                                                            <ChevronRight className="h-5 w-5" />
+                                                        )}
+                                                    </Button>
+                                                </CollapsibleTrigger>
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-semibold text-base">{cls.name}</h3>
+                                                    <p className="text-sm text-muted-foreground truncate">
+                                                        {cls.description || 'Imported from student sheet'}
+                                                    </p>
+                                                </div>
+                                                <div className="text-sm font-medium whitespace-nowrap">
+                                                    {cls.students_count ?? 0} students
+                                                </div>
+                                                <div className="flex gap-2 ml-4">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            openEditDialog(cls);
+                                                        }}
+                                                    >
+                                                        Edit
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="text-red-600 hover:text-red-700"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDelete(cls);
+                                                        }}
+                                                    >
+                                                        Delete
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            <CollapsibleContent>
+                                                <div className="border-t px-4 py-3 bg-muted/30">
+                                                    {loadingStudents.has(cls.id) ? (
+                                                        <p className="text-sm text-muted-foreground py-2">Loading students...</p>
+                                                    ) : cls.students && cls.students.length > 0 ? (
+                                                        <div className="space-y-2">
+                                                            <h4 className="text-sm font-semibold mb-3">Students:</h4>
+                                                            <div className="grid gap-2">
+                                                                {cls.students.map((student) => (
+                                                                    <div
+                                                                        key={student.id}
+                                                                        className="flex items-center gap-3 p-3 bg-background rounded-md border text-sm"
+                                                                    >
+                                                                        <span className="font-medium">{student.name}</span>
+                                                                        <span className="text-muted-foreground">
+                                                                            {student.email}
+                                                                        </span>
+                                                                        {canManageStudents && (
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="outline"
+                                                                                size="sm"
+                                                                                className="ml-auto"
+                                                                                onClick={() => openEditStudentDialog(student)}
+                                                                            >
+                                                                                Edit
+                                                                            </Button>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm text-muted-foreground py-2">No students in this class</p>
+                                                    )}
+                                                </div>
+                                            </CollapsibleContent>
+                                        </div>
+                                    </Collapsible>
+                                ))}
                             </div>
                         )}
                     </CardContent>
@@ -381,6 +608,194 @@ export default function AdminClassesIndex() {
                             </Button>
                             <Button type="submit" disabled={createSubmitting}>
                                 {createSubmitting ? 'Creating...' : 'Create'}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit Student Dialog */}
+            <Dialog open={!!editingStudent} onOpenChange={(open) => !open && closeEditStudentDialog()}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Edit student</DialogTitle>
+                        <DialogDescription>Update student details.</DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleEditStudent} className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-name">Student name</Label>
+                                <Input
+                                    id="edit-student-name"
+                                    value={editStudentName}
+                                    onChange={(e) => setEditStudentName(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-class">Class</Label>
+                                <select
+                                    id="edit-student-class"
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    value={editStudentClassId}
+                                    onChange={(e) => setEditStudentClassId(e.target.value)}
+                                >
+                                    <option value="">No class</option>
+                                    {list.map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                            {c.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-email">Email</Label>
+                                <Input
+                                    id="edit-student-email"
+                                    type="email"
+                                    value={editStudentEmail}
+                                    onChange={(e) => setEditStudentEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-password">New password (leave blank to keep)</Label>
+                                <Input
+                                    id="edit-student-password"
+                                    type="password"
+                                    value={editStudentPassword}
+                                    onChange={(e) => setEditStudentPassword(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-guardian-name">Guardian name</Label>
+                                <Input
+                                    id="edit-student-guardian-name"
+                                    value={editStudentGuardianName}
+                                    onChange={(e) => setEditStudentGuardianName(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-guardian-phone">Guardian phone</Label>
+                                <Input
+                                    id="edit-student-guardian-phone"
+                                    value={editStudentGuardianPhone}
+                                    onChange={(e) => setEditStudentGuardianPhone(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-student-guardian-relationship">Relationship</Label>
+                                <select
+                                    id="edit-student-guardian-relationship"
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    value={editStudentGuardianRelationship}
+                                    onChange={(e) => setEditStudentGuardianRelationship(e.target.value)}
+                                >
+                                    <option value="">Select relationship</option>
+                                    {GUARDIAN_RELATIONSHIPS.map((rel) => (
+                                        <option key={rel} value={rel}>
+                                            {rel}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label>Additional guardians (optional)</Label>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                        setEditStudentExtraGuardians((prev) => [
+                                            ...prev,
+                                            { name: '', phone: '', relationship: '' },
+                                        ])
+                                    }
+                                >
+                                    Add guardian
+                                </Button>
+                            </div>
+                            {editStudentExtraGuardians.length > 0 && (
+                                <div className="space-y-3 border rounded-md p-3">
+                                    {editStudentExtraGuardians.map((g, index) => (
+                                        <div
+                                            key={index}
+                                            className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                        >
+                                            <Input
+                                                placeholder="Guardian name"
+                                                value={g.name}
+                                                onChange={(e) =>
+                                                    setEditStudentExtraGuardians((prev) =>
+                                                        prev.map((item, i) =>
+                                                            i === index ? { ...item, name: e.target.value } : item,
+                                                        ),
+                                                    )
+                                                }
+                                            />
+                                            <Input
+                                                placeholder="Phone"
+                                                value={g.phone}
+                                                onChange={(e) =>
+                                                    setEditStudentExtraGuardians((prev) =>
+                                                        prev.map((item, i) =>
+                                                            i === index ? { ...item, phone: e.target.value } : item,
+                                                        ),
+                                                    )
+                                                }
+                                            />
+                                            <select
+                                                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                value={g.relationship}
+                                                onChange={(e) =>
+                                                    setEditStudentExtraGuardians((prev) =>
+                                                        prev.map((item, i) =>
+                                                            i === index ? { ...item, relationship: e.target.value } : item,
+                                                        ),
+                                                    )
+                                                }
+                                            >
+                                                <option value="">Relationship</option>
+                                                {GUARDIAN_RELATIONSHIPS.map((rel) => (
+                                                    <option key={rel} value={rel}>
+                                                        {rel}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-red-600"
+                                                onClick={() =>
+                                                    setEditStudentExtraGuardians((prev) =>
+                                                        prev.filter((_, i) => i !== index),
+                                                    )
+                                                }
+                                            >
+                                                Remove
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        {editStudentError && (
+                            <p className="text-sm text-red-500">{editStudentError}</p>
+                        )}
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={closeEditStudentDialog}
+                                disabled={editStudentSubmitting}
+                            >
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={editStudentSubmitting}>
+                                {editStudentSubmitting ? 'Saving...' : 'Save'}
                             </Button>
                         </DialogFooter>
                     </form>

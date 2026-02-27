@@ -43,6 +43,10 @@ const breadcrumbs: BreadcrumbItem[] = [
 export default function AdminUsersIndex() {
     const [users, setUsers] = useState<ManagedUser[]>([]);
     const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [filterType, setFilterType] = useState<
+        'all' | 'students' | 'non-students' | 'super-admin'
+    >('all');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -79,7 +83,7 @@ export default function AdminUsersIndex() {
     }, []);
 
     const fetchUsers = useCallback(async () => {
-        const response = await fetch('/admin/api/users', {
+        const response = await fetch('/admin/api/users?per_page=10000', {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         });
@@ -105,6 +109,59 @@ export default function AdminUsersIndex() {
             cancelled = true;
         };
     }, [fetchUsers]);
+
+    function getAccountType(user: ManagedUser): string {
+        const roleNames = user.roles?.map((r) => r.name) ?? [];
+
+        if (roleNames.includes('student')) {
+            return 'Student';
+        }
+
+        if (roleNames.includes('teacher')) {
+            return 'Teacher';
+        }
+
+        if (roleNames.includes('driver')) {
+            return 'Driver';
+        }
+
+        if (roleNames.includes('staff')) {
+            return 'Staff';
+        }
+
+        if (roleNames.includes('super-admin')) {
+            return 'Super admin';
+        }
+
+        if (roleNames.length === 0) {
+            return 'Unassigned';
+        }
+
+        return roleNames.join(', ');
+    }
+
+    const filteredUsers = users.filter((user) => {
+        const term = search.trim().toLowerCase();
+        const roleNames = user.roles?.map((r) => r.name) ?? [];
+        const isStudent = roleNames.includes('student');
+        const isSuperAdmin = roleNames.includes('super-admin');
+
+        const matchesSearch =
+            term.length === 0 ||
+            user.name.toLowerCase().includes(term) ||
+            user.email.toLowerCase().includes(term);
+
+        let matchesType = true;
+        if (filterType === 'students') {
+            matchesType = isStudent;
+        } else if (filterType === 'non-students') {
+            matchesType = !isStudent;
+        } else if (filterType === 'super-admin') {
+            matchesType = isSuperAdmin;
+        }
+
+        return matchesSearch && matchesType;
+    });
 
     async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -478,72 +535,175 @@ export default function AdminUsersIndex() {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>All admin accounts</CardTitle>
+                        <CardTitle>All user accounts</CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                        {loading ? (
-                            <p className="text-sm text-muted-foreground">
-                                Loading users...
-                            </p>
-                        ) : users.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                                No users found.
-                            </p>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="border-b text-left">
-                                            <th className="py-2 pr-4">Name</th>
-                                            <th className="py-2 pr-4">Email</th>
-                                            <th className="py-2 pr-4">Role</th>
-                                            <th className="py-2 pr-4">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {users.map((user) => (
-                                            <tr
-                                                key={user.id}
-                                                className="border-b last:border-0"
-                                            >
-                                                <td className="py-2 pr-4">
-                                                    {user.name}
-                                                </td>
-                                                <td className="py-2 pr-4">
-                                                    {user.email}
-                                                </td>
-                                                <td className="py-2 pr-4">
-                                                    {user.roles
-                                                        ?.map((r) => r.name)
-                                                        .join(', ') || '—'}
-                                                </td>
-                                                <td className="py-2 pr-4 flex gap-2">
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={() => openEdit(user)}
+                    <CardContent>
+                        <div className="flex flex-col gap-6 md:flex-row">
+                            <aside className="w-full space-y-4 rounded-md border bg-muted/40 p-4 md:w-64">
+                                <div className="space-y-2">
+                                    <Label htmlFor="user-search" className="text-sm">
+                                        Search accounts
+                                    </Label>
+                                    <Input
+                                        id="user-search"
+                                        placeholder="Name or email"
+                                        value={search}
+                                        onChange={(event) =>
+                                            setSearch(event.target.value)
+                                        }
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <p className="text-xs font-medium text-muted-foreground">
+                                        Filter by account type
+                                    </p>
+                                    <div className="grid gap-2">
+                                        <Button
+                                            type="button"
+                                            variant={
+                                                filterType === 'all'
+                                                    ? 'default'
+                                                    : 'outline'
+                                            }
+                                            size="sm"
+                                            className="justify-start"
+                                            onClick={() => setFilterType('all')}
+                                        >
+                                            All accounts
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={
+                                                filterType === 'students'
+                                                    ? 'default'
+                                                    : 'outline'
+                                            }
+                                            size="sm"
+                                            className="justify-start"
+                                            onClick={() => setFilterType('students')}
+                                        >
+                                            Students
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={
+                                                filterType === 'non-students'
+                                                    ? 'default'
+                                                    : 'outline'
+                                            }
+                                            size="sm"
+                                            className="justify-start"
+                                            onClick={() =>
+                                                setFilterType('non-students')
+                                            }
+                                        >
+                                            Admins & staff
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={
+                                                filterType === 'super-admin'
+                                                    ? 'default'
+                                                    : 'outline'
+                                            }
+                                            size="sm"
+                                            className="justify-start"
+                                            onClick={() =>
+                                                setFilterType('super-admin')
+                                            }
+                                        >
+                                            Super admins
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <p className="text-xs text-muted-foreground">
+                                    As <span className="font-semibold">super admin</span>{' '}
+                                    you can edit any account here. The primary
+                                    `super@gmail.com` account itself is still
+                                    protected from changes by others.
+                                </p>
+                            </aside>
+
+                            <div className="flex-1 space-y-4">
+                                {loading ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        Loading users...
+                                    </p>
+                                ) : filteredUsers.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        No users match your current filters.
+                                    </p>
+                                ) : (
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                            <thead>
+                                                <tr className="border-b text-left">
+                                                    <th className="py-2 pr-4">
+                                                        Name
+                                                    </th>
+                                                    <th className="py-2 pr-4">
+                                                        Email
+                                                    </th>
+                                                    <th className="py-2 pr-4">
+                                                        Account type
+                                                    </th>
+                                                    <th className="py-2 pr-4">
+                                                        Actions
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {filteredUsers.map((user) => (
+                                                    <tr
+                                                        key={user.id}
+                                                        className="border-b last:border-0"
                                                     >
-                                                        Edit
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="text-red-600 hover:text-red-700"
-                                                        onClick={() =>
-                                                            handleDelete(user)
-                                                        }
-                                                    >
-                                                        Delete
-                                                    </Button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                                        <td className="py-2 pr-4">
+                                                            {user.name}
+                                                        </td>
+                                                        <td className="py-2 pr-4">
+                                                            {user.email}
+                                                        </td>
+                                                        <td className="py-2 pr-4">
+                                                            {getAccountType(user)}
+                                                        </td>
+                                                        <td className="flex gap-2 py-2 pr-4">
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={() =>
+                                                                    openEdit(
+                                                                        user,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Edit
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="text-red-600 hover:text-red-700"
+                                                                onClick={() =>
+                                                                    handleDelete(
+                                                                        user,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Delete
+                                                            </Button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
                             </div>
-                        )}
+                        </div>
                     </CardContent>
                 </Card>
             </div>

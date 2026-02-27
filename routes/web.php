@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\Admin\FeeActivityController as AdminFeeActivityPageController;
+use App\Http\Controllers\Admin\FeeClassController as AdminFeeClassPageController;
+use App\Http\Controllers\Admin\FeeController as AdminFeePageController;
+use App\Http\Controllers\Admin\FeeSummaryController as AdminFeeSummaryPageController;
 use App\Http\Controllers\Admin\SchoolClassController as AdminSchoolClassPageController;
 use App\Http\Controllers\Admin\StaffController as AdminStaffPageController;
 use App\Http\Controllers\Admin\StudentController as AdminStudentPageController;
@@ -7,10 +11,17 @@ use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TeachersController as AdminTeachersPageController;
 use App\Http\Controllers\Admin\TripController as AdminTripPageController;
 use App\Http\Controllers\Admin\UserController as AdminUserPageController;
+use App\Http\Controllers\Api\AdminFeeCreateStudentsController;
+use App\Http\Controllers\Api\AdminFeeImportController;
+use App\Http\Controllers\Api\AdminFeeImportFromSpreadsheetController;
+use App\Http\Controllers\Api\AdminFeePreviewController;
 use App\Http\Controllers\Api\AdminUserController;
+use App\Http\Controllers\Api\FeeActivityController as ApiFeeActivityController;
+use App\Http\Controllers\Api\FeeClassController as ApiFeeClassController;
 use App\Http\Controllers\Api\LocationController as ApiLocationController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\SchoolClassController as ApiSchoolClassController;
+use App\Http\Controllers\Api\StudentController as ApiStudentController;
 use App\Http\Controllers\Api\TripController as ApiTripController;
 use App\Http\Controllers\Transport\LocationController as TransportLocationPageController;
 use Illuminate\Support\Facades\Route;
@@ -60,6 +71,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('permission:manage classes')
         ->name('admin.classes.index');
 
+    Route::get('admin/fees', [AdminFeePageController::class, 'index'])
+        ->middleware('permission:view fees')
+        ->name('admin.fees.index');
+
+    Route::get('admin/fees/activities', [AdminFeeActivityPageController::class, 'index'])
+        ->middleware('permission:manage fees')
+        ->name('admin.fees.activities.index');
+
+    Route::get('admin/fees/classes', [AdminFeeClassPageController::class, 'index'])
+        ->middleware('permission:manage fees')
+        ->name('admin.fees.classes.index');
+
+    Route::get('admin/fees/summary', [AdminFeeSummaryPageController::class, 'index'])
+        ->middleware('permission:view fees')
+        ->name('admin.fees.summary.index');
+
     Route::get('admin/transport/trips', AdminTripPageController::class)
         ->middleware('permission:manage transport')
         ->name('admin.transport.trips.index');
@@ -85,6 +112,32 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Class management (used by admin/students UI & student-admins).
         Route::middleware('permission:manage classes')->group(function () {
             Route::apiResource('classes', ApiSchoolClassController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
+        });
+
+        // Fee management (admin UI)
+        Route::middleware('permission:manage fees')->group(function () {
+            Route::post('fees/import', AdminFeeImportController::class)->name('admin.api.fees.import');
+            Route::post('fees/import/from-spreadsheet', AdminFeeImportFromSpreadsheetController::class)->name('admin.api.fees.import.from-spreadsheet');
+            Route::post('fees/import/preview', AdminFeePreviewController::class)->name('admin.api.fees.import.preview');
+            Route::apiResource('fees/activities', ApiFeeActivityController::class)->only(['index', 'store', 'update', 'destroy']);
+            Route::apiResource('fees/classes', ApiFeeClassController::class)->only(['index', 'update']);
+        });
+        Route::middleware(['permission:manage fees', 'permission:manage students'])->group(function () {
+            Route::post('fees/import/create-students', AdminFeeCreateStudentsController::class)->name('admin.api.fees.import.create-students');
+        });
+
+        // Student management (admin UI, uses web guard + session).
+        Route::middleware('permission:view students|manage students')->group(function () {
+            Route::get('students', [ApiStudentController::class, 'index'])->name('admin.api.students.index');
+            Route::get('students/duplicates', [ApiStudentController::class, 'duplicates'])->name('admin.api.students.duplicates');
+            Route::get('students/{student}', [ApiStudentController::class, 'show'])->name('admin.api.students.show');
+        });
+        Route::middleware('permission:manage students')->group(function () {
+            Route::post('students', [ApiStudentController::class, 'store'])->name('admin.api.students.store');
+            Route::post('students/import', [ApiStudentController::class, 'import'])->name('admin.api.students.import');
+            Route::delete('students/bulk', [ApiStudentController::class, 'bulkDestroy'])->name('admin.api.students.bulk-destroy');
+            Route::match(['put', 'patch'], 'students/{student}', [ApiStudentController::class, 'update'])->name('admin.api.students.update');
+            Route::delete('students/{student}', [ApiStudentController::class, 'destroy'])->name('admin.api.students.destroy');
         });
     });
 

@@ -19,23 +19,38 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $identifier = $validated['identifier'];
-        $password = $validated['password'];
+        $identifier = trim($validated['identifier']);
+        $password = trim($validated['password']);
 
-        // Determine if identifier is email or phone
-        $user = null;
-        if (str_contains($identifier, '@')) {
-            // Looks like email
-            $user = User::where('email', $identifier)->first();
-        } else {
-            // Treat as phone number
-            $user = User::where('guardian_phone', $identifier)->first();
+        // Always use student email as identifier
+        /** @var \App\Models\User|null $user */
+        $user = User::where('email', $identifier)->first();
+
+        $phones = [];
+        if ($user !== null && $user->guardian_phone) {
+            $phones[] = trim((string) $user->guardian_phone);
+        }
+        if ($user !== null && is_array($user->extra_guardians)) {
+            foreach ($user->extra_guardians as $guardian) {
+                if (! empty($guardian['phone'])) {
+                    $phones[] = trim((string) $guardian['phone']);
+                }
+            }
         }
 
-        if (! $user || ! Hash::check($password, $user->password)) {
+        $phones = array_values(array_unique($phones));
+
+        // Password must match one of the guardian phone numbers
+        if ($user === null || empty($phones) || ! in_array($password, $phones, true)) {
             throw ValidationException::withMessages([
                 'identifier' => ['The provided credentials are incorrect.'],
             ]);
+        }
+
+        // Ensure the stored password hash matches the phone the guardian used
+        if (! Hash::check($password, $user->password)) {
+            $user->password = Hash::make($password);
+            $user->save();
         }
 
         // Log the user in

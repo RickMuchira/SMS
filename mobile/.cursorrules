@@ -1,0 +1,90 @@
+# React Native UI Development Guidelines - Circle Spring School
+
+You are an expert React Native UI developer. Build mobile interfaces following these strict guidelines:
+
+## BRAND
+Primary color: #A63446 (burgundy/maroon - use as accent, CTAs, active states, highlights)
+Keep the palette minimal — pair with white, light grays, and dark neutrals.
+
+## LAYOUT & STRUCTURE
+- Use SafeAreaView for all screens
+- Respect device safe areas (notch, home indicator, status bar)
+- All touchable elements must be minimum 44x44px
+- Place primary actions within thumb reach (bottom of screen)
+- Use bottom tab navigation for main navigation
+- Avoid placing critical actions at the top of long screens
+
+## TYPOGRAPHY
+- Minimum body font size: 16px
+- Use a clear type hierarchy (heading, subheading, body, caption)
+- Ensure text scales with system font size (use relative units where possible)
+- Never use light gray text on white — maintain WCAG AA contrast ratio
+
+## SPACING & VISUAL DESIGN
+- Use consistent spacing scale (4, 8, 16, 24, 32px)
+- Give components breathing room — avoid cramped layouts
+- Use cards with subtle shadows or borders to group related content
+- Maintain visual hierarchy through size, weight, and color — not just color alone
+- Support dark mode from the start using useColorScheme()
+
+## TOUCH & INTERACTION
+- Every interactive element must have a visible pressed/active state
+- Use TouchableOpacity or Pressable (never TouchableHighlight unless intentional)
+- Add haptic feedback on key actions using expo-haptics or react-native-haptic-feedback
+- Swipe gestures should have visible affordance
+- Debounce or disable buttons after tap to prevent double submissions
+
+## FORMS & INPUT
+- Set correct keyboardType per field (email-address, numeric, phone-pad, etc.)
+- Use returnKeyType to guide users through form flow
+- Show inline validation — not only on submit
+- Auto-dismiss keyboard when tapping outside input
+- Support autofill (textContentType on iOS, autoComplete on Android)
+
+## LOADING & FEEDBACK STATES
+- Every async action must show a loading state
+- Use skeleton screens instead of spinners where possible
+- Always handle and display error states with a recovery action
+- Show empty states with a helpful message and CTA
+- Every user action must have an immediate visual response
+
+## PERFORMANCE
+- Lazy load screens using React Navigation's lazy option
+- Use FlatList or FlashList (never ScrollView for long lists)
+- Memoize components with React.memo where re-renders are expensive
+- Avoid anonymous functions in JSX props on list items
+- Use useCallback and useMemo deliberately, not everywhere
+
+## ACCESSIBILITY
+- All images must have accessible labels
+- All interactive elements must have accessibilityLabel and accessibilityRole
+- Never use color alone to convey meaning
+- Test with VoiceOver (iOS) and TalkBack (Android) in mind
+- Support dynamic text sizes — avoid fixed heights that clip text
+
+## NAVIGATION
+- Use React Navigation (native stack for performance)
+- Always provide a way back — no dead ends
+- Use meaningful screen transition animations
+- Keep navigation state predictable and deep-linkable
+
+## ONBOARDING & PERMISSIONS
+- Never ask for permissions without explaining why first
+- Use progressive disclosure — show features as the user needs them
+- Get the user to core value as fast as possible
+
+## CODE STANDARDS
+- Use StyleSheet.create() — never inline styles in JSX
+- Keep components small and single-responsibility
+- Separate UI components from logic (custom hooks for data/logic)
+- Use TypeScript for all components and props
+- Name components clearly and consistently (PascalCase)
+
+## PROJECT-SPECIFIC
+- Always import Colors from '@/constants/theme' for brand colors
+- Use ThemedView and ThemedText components for automatic dark mode support
+- Use useThemeColor hook to access theme colors dynamically
+- All API calls should use the token from useAuth() context
+- Base API URL should come from process.env.EXPO_PUBLIC_API_URL
+
+When building any screen or component, always consider: thumb reach, readability, contrast, loading states, error states, empty states, and accessibility — before considering aesthetics.

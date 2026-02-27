@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -29,6 +30,7 @@ class User extends Authenticatable
         'guardian_name',
         'guardian_phone',
         'guardian_relationship',
+        'extra_guardians',
     ];
 
     /**
@@ -54,11 +56,37 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
+            'extra_guardians' => 'array',
         ];
     }
 
     public function schoolClass(): BelongsTo
     {
         return $this->belongsTo(SchoolClass::class, 'class_id');
+    }
+
+    public function fees(): HasMany
+    {
+        return $this->hasMany(StudentFee::class);
+    }
+
+    public function termBalances(): HasMany
+    {
+        return $this->hasMany(StudentTermBalance::class);
+    }
+
+    public function getTotalFeesAttribute(): float
+    {
+        return (float) $this->fees()->sum('amount');
+    }
+
+    public function getTotalPaidAttribute(): float
+    {
+        return (float) $this->fees()->sum('amount_paid');
+    }
+
+    public function getTotalBalanceAttribute(): float
+    {
+        return $this->total_fees - $this->total_paid;
     }
 }

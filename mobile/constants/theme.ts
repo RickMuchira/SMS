@@ -1,29 +1,55 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Circle Spring School Theme Colors
+ * Extracted from school website design for consistent branding
  */
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+// School brand colors from website
+const primaryBurgundy = '#A63446';
+const secondaryNavy = '#001F5C';
+const accentCyan = '#2BB8E8';
+const darkRed = '#8B2332';
+
+const tintColorLight = primaryBurgundy;
+const tintColorDark = accentCyan;
 
 export const Colors = {
   light: {
     text: '#11181C',
-    background: '#fff',
+    background: '#FFFFFF',
     tint: tintColorLight,
+    primary: primaryBurgundy,
+    secondary: secondaryNavy,
+    accent: accentCyan,
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
+    card: '#F8FAFC',
+    border: '#E2E8F0',
+    success: '#10B981',
+    warning: '#F39C12',
+    error: '#DC2626',
+    muted: '#64748B',
+    heading: darkRed,
   },
   dark: {
     text: '#ECEDEE',
-    background: '#151718',
+    background: '#0F172A',
     tint: tintColorDark,
+    primary: '#C84458',
+    secondary: secondaryNavy,
+    accent: accentCyan,
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+    card: '#1E293B',
+    border: '#334155',
+    success: '#10B981',
+    warning: '#F39C12',
+    error: '#EF4444',
+    muted: '#94A3B8',
+    heading: '#C84458',
   },
 };
 

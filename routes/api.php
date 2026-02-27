@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DriverController;
+use App\Http\Controllers\Api\FeeController;
 use App\Http\Controllers\Api\ModuleController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\RoleAssignmentController;
@@ -19,6 +20,9 @@ Route::prefix('auth')->group(function (): void {
     Route::middleware('auth:sanctum')->group(function (): void {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::get('me', [AuthController::class, 'me']);
+
+        Route::get('fees', [FeeController::class, 'index']);
+        Route::get('fees/{studentFee}', [FeeController::class, 'show']);
     });
 });
 
@@ -41,7 +45,8 @@ Route::middleware(['auth'])->group(function (): void {
         Route::apiResource('classes', SchoolClassController::class);
     });
 
-    Route::middleware('permission:view students')->group(function (): void {
+    // Student listing & detail: allow either "view students" or "manage students".
+    Route::middleware('permission:view students|manage students')->group(function (): void {
         Route::get('students', [StudentController::class, 'index']);
         Route::get('students/{student}', [StudentController::class, 'show']);
     });

@@ -15,6 +15,8 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RolePermissionSeeder::class,
             SuperAdminSeeder::class,
+            ImportSheetClassesSeeder::class,
+            AcademicTermSeeder::class,
         ]);
 
         // You may create initial users and assign roles here if desired.
