@@ -1,0 +1,35 @@
+---
+description: Prevent breaking results pages and mobile login with unsafe networking changes
+alwaysApply: true
+---
+
+# Results & Network Safety Rules
+
+- **Do NOT break `/admin/results` or `/admin/results/edit`**
+  - Always keep the results pages loading without React runtime errors.
+  - When adding new props from the API, **extend** existing types instead of replacing them.
+  - Guard all optional values before calling methods like `.toFixed()` or `Object.keys(...)`.
+
+- **Safe inline edits on results tables**
+  - When editing rows in `admin/results/index.tsx`:
+    - Never call APIs with an `undefined` or `null` `studentId` or `classId`.
+    - Always check IDs before building URLs like `/admin/api/results/student/{id}`.
+    - Keep keys in list rendering unique and stable: use `student.user_id` and full `subject` name as keys.
+
+- **API changes for results analytics**
+  - When modifying `ResultAnalyticsController::classResults`:
+    - Only add fields; do not remove or rename existing JSON keys that the frontend already uses.
+    - If adding anomaly detection or extra data, return them in **new** keys (e.g. `anomalies`).
+    - Do not introduce new relationships on `User` unless they already exist; prefer using `SchoolClass::students()` for class membership.
+
+- **Mobile & web must stay compatible**
+  - Changes to results APIs must **not** break `/api/auth/results` used by the mobile app.
+  - If you need to add mobile-only behaviour, add new fields and keep existing response shape intact.
+
+- **When the user says “network request failed” on login**
+  - First, verify the backend and Vite dev server are running.
+  - Then check for recent changes to:
+    - `routes/api.php` and `routes/web.php` around auth and results routes.
+    - `mobile/app/(tabs)/results.tsx` and `EXPO_PUBLIC_API_URL`.
+  - Avoid doing large refactors; prefer **small, reversible** edits until login and results load successfully again.
+

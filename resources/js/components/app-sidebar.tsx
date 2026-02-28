@@ -1,5 +1,5 @@
 import { Link } from '@inertiajs/react';
-import { BookOpen, Bus, FileText, Folder, GraduationCap, LayoutGrid, Shield, Users } from 'lucide-react';
+import { BookOpen, Bus, FileText, Folder, GraduationCap, LayoutGrid, Shield, Trophy, Users } from 'lucide-react';
 import { NavFooter } from '@/components/nav-footer';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -90,6 +90,33 @@ export function AppSidebar() {
                       title: 'Fees',
                       href: '/admin/fees',
                       icon: FileText,
+                  } satisfies NavItem,
+              ]
+            : []),
+        ...(hasPermission('view results') || hasPermission('manage results') || hasPermission('manage academics')
+            ? [
+                  {
+                      title: 'Results',
+                      href: '/admin/results',
+                      icon: Trophy,
+                      items: [
+                          {
+                              title: 'Import Results',
+                              href: '/admin/results',
+                          },
+                          {
+                              title: 'View Analytics',
+                              href: '/admin/results/view',
+                          },
+                          {
+                              title: 'Edit Results',
+                              href: '/admin/results/edit',
+                          },
+                          {
+                              title: 'Stream Comparison',
+                              href: '/admin/results/streams',
+                          },
+                      ],
                   } satisfies NavItem,
               ]
             : []),

@@ -45,6 +45,15 @@ class ModuleController extends Controller
                     'manage transport',
                 ],
             ],
+            [
+                'key' => 'results',
+                'label' => 'Results Module',
+                'permissions' => [
+                    'view results',
+                    'manage results',
+                    'manage academics',
+                ],
+            ],
         ];
 
         $available = collect($modules)

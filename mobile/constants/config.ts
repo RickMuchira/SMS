@@ -1,7 +1,19 @@
+import Constants from 'expo-constants';
+
 /**
  * API base URL for the Laravel backend.
- * - iOS Simulator / Android Emulator: use localhost or 10.0.2.2 (Android) for 127.0.0.1
- * - Physical device: use your computer's local IP (e.g. http://192.168.1.100:8000)
+ *
+ * Priority:
+ * 1. EXPO_PUBLIC_API_URL from env (recommended for production).
+ * 2. Infer LAN IP from Expo dev server hostUri and use port 8000.
+ * 3. Fallback to http://localhost:8000 (for simulators hitting local machine).
  */
+const inferredHost = (() => {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) return null;
+  const host = hostUri.split(':')[0]; // e.g. 192.168.1.10 from 192.168.1.10:19000
+  return host ? `http://${host}:8000` : null;
+})();
+
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://ad2d-102-135-173-96.ngrok-free.app' ?? inferredHost ?? 'http://localhost:8000';

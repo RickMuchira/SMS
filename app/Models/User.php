@@ -75,6 +75,11 @@ class User extends Authenticatable
         return $this->hasMany(StudentTermBalance::class);
     }
 
+    public function academicResults(): HasMany
+    {
+        return $this->hasMany(AcademicResult::class);
+    }
+
     public function getTotalFeesAttribute(): float
     {
         return (float) $this->fees()->sum('amount');

@@ -26,26 +26,42 @@ export async function login(
   identifier: string,
   password: string
 ): Promise<LoginResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({ identifier, password }),
-  });
+  const url = `${API_BASE_URL}/api/auth/login`;
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ identifier, password }),
+    });
+  } catch (error) {
+    console.error('Login network request failed', {
+      url,
+      baseUrl: API_BASE_URL,
+      error,
+    });
+    throw new Error(
+      'Network request failed while logging in. Make sure your phone can reach ' +
+        url,
+    );
+  }
 
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
     const msg =
-      data.errors?.identifier?.[0] ??
-      data.message ??
+      (data as any).errors?.identifier?.[0] ??
+      (data as any).message ??
       'Login failed';
+    console.error('Login failed', { url, status: res.status, data });
     throw new Error(msg);
   }
 
-  return data;
+  return data as LoginResponse;
 }
 
 export async function logout(): Promise<void> {

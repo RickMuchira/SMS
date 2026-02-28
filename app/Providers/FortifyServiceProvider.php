@@ -57,7 +57,7 @@ class FortifyServiceProvider extends ServiceProvider
             if ($request->boolean('admin_mode')) {
                 // Allow super-admin, student-admin, driver-admin, etc.
                 $allowedRoles = ['super-admin', 'student-admin', 'driver-admin'];
-                
+
                 if (! $user->hasAnyRole($allowedRoles)) {
                     return null;
                 }

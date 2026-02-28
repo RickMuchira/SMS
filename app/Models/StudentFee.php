@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,9 +14,17 @@ class StudentFee extends Model
         return [
             'amount' => 'decimal:2',
             'amount_paid' => 'decimal:2',
-            'balance' => 'decimal:2',
             'due_date' => 'date',
         ];
+    }
+
+    protected $appends = ['balance'];
+
+    public function balance(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => number_format((float) $this->amount - (float) $this->amount_paid, 2, '.', '')
+        );
     }
 
     protected $fillable = [
@@ -37,6 +46,11 @@ class StudentFee extends Model
     public function feeStructure(): BelongsTo
     {
         return $this->belongsTo(FeeStructure::class);
+    }
+
+    public function academicTerm(): BelongsTo
+    {
+        return $this->belongsTo(AcademicTerm::class);
     }
 
     public function payments(): HasMany

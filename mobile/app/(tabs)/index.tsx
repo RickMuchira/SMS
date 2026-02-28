@@ -85,11 +85,10 @@ export default function HomeScreen() {
                 { backgroundColor: accent },
                 pressed && styles.actionButtonPressed,
               ]}
-              onPress={() => {}}
+              onPress={() => router.push('/results')}
               accessibilityRole="button"
               accessibilityLabel="View Grades"
               accessibilityHint="View your academic grades"
-              disabled
             >
               <ThemedText style={styles.actionButtonText}>Grades</ThemedText>
             </Pressable>

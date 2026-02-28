@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\DriverController;
 use App\Http\Controllers\Api\FeeController;
 use App\Http\Controllers\Api\ModuleController;
 use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\ResultController;
 use App\Http\Controllers\Api\RoleAssignmentController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SchoolClassController;
@@ -23,6 +24,8 @@ Route::prefix('auth')->group(function (): void {
 
         Route::get('fees', [FeeController::class, 'index']);
         Route::get('fees/{studentFee}', [FeeController::class, 'show']);
+
+        Route::get('results', [ResultController::class, 'index']);
     });
 });
 

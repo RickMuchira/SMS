@@ -6,6 +6,7 @@ import {
   removeStoredToken,
   setStoredToken,
 } from '@/lib/api';
+import { API_BASE_URL } from '@/constants/config';
 
 type User = {
   id: number;
@@ -39,7 +40,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/auth/me`, {
+      const meUrl = `${API_BASE_URL}/api/auth/me`;
+      const res = await fetch(meUrl, {
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${storedToken}`,
@@ -73,7 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/auth/me`, {
+        const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
           headers: {
             Accept: 'application/json',
             Authorization: `Bearer ${storedToken}`,
@@ -88,7 +90,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           setToken(null);
         }
-      } catch {
+      } catch (error) {
+        console.error('refreshUser /api/auth/me failed', {
+          url: `${API_BASE_URL}/api/auth/me`,
+          error,
+        });
         await removeStoredToken();
         setUser(null);
         setToken(null);
@@ -105,6 +111,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await setStoredToken(data.token);
       setUser(data.user);
       setToken(data.token);
+    } catch (error) {
+      console.error('AuthContext login error', error);
+      throw error;
     } finally {
       setIsLoading(false);
     }

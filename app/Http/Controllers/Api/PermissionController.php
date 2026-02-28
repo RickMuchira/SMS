@@ -50,6 +50,10 @@ class PermissionController extends Controller
                 'label' => 'Teachers Module',
                 'permissions' => ['view teachers', 'manage teachers'],
             ],
+            'results' => [
+                'label' => 'Results Module',
+                'permissions' => ['view results', 'manage results', 'manage academics'],
+            ],
             'management' => [
                 'label' => 'System Management',
                 'permissions' => ['view roles', 'manage roles', 'view permissions', 'manage permissions'],

@@ -13,10 +13,23 @@ class FeeController extends Controller
     {
         $user = $request->user();
 
-        $fees = StudentFee::with(['feeStructure', 'payments'])
+        $fees = StudentFee::with(['feeStructure', 'payments', 'academicTerm'])
             ->where('user_id', $user->id)
             ->orderBy('due_date', 'asc')
-            ->get();
+            ->get()
+            ->map(function ($fee) {
+                return [
+                    'id' => $fee->id,
+                    'amount' => $fee->amount,
+                    'amount_paid' => $fee->amount_paid,
+                    'balance' => $fee->balance,
+                    'status' => $fee->status,
+                    'due_date' => $fee->due_date?->format('Y-m-d'),
+                    'term' => $fee->academicTerm?->name,
+                    'academic_year' => $fee->academicTerm?->academic_year,
+                    'fee_structure' => $fee->feeStructure,
+                ];
+            });
 
         $summary = [
             'total_fees' => $user->total_fees,

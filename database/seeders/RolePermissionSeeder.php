@@ -42,6 +42,11 @@ class RolePermissionSeeder extends Seeder
                 'view teachers',
                 'manage teachers',
             ],
+            'academics' => [
+                'view results',
+                'manage results',
+                'manage academics',
+            ],
         ];
 
         $managementPermissions = [
@@ -83,6 +88,10 @@ class RolePermissionSeeder extends Seeder
             ['name' => 'driver-admin', 'guard_name' => 'web']
         );
 
+        $academicAdminRole = Role::firstOrCreate(
+            ['name' => 'academic-admin', 'guard_name' => 'web']
+        );
+
         Role::firstOrCreate(['name' => 'teacher', 'guard_name' => 'web']);
         Role::firstOrCreate(['name' => 'student', 'guard_name' => 'web']);
         Role::firstOrCreate(['name' => 'staff', 'guard_name' => 'web']);
@@ -100,6 +109,16 @@ class RolePermissionSeeder extends Seeder
 
         $driverAdminRole->syncPermissions(
             Permission::whereIn('name', ['view drivers', 'manage drivers', 'view transport', 'manage transport'])->get()
+        );
+
+        $academicAdminRole->syncPermissions(
+            Permission::whereIn('name', [
+                'view results',
+                'manage results',
+                'manage academics',
+                'view students',
+                'view classes',
+            ])->get()
         );
     }
 }

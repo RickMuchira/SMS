@@ -26,7 +26,7 @@ class StudentAdminSeeder extends Seeder
         $user->syncRoles(['student-admin']);
 
         $this->command->info("Student admin created: {$user->email}");
-        $this->command->info("Password: Muchira21110");
-        $this->command->info("Permissions: " . $user->getAllPermissions()->pluck('name')->implode(', '));
+        $this->command->info('Password: Muchira21110');
+        $this->command->info('Permissions: '.$user->getAllPermissions()->pluck('name')->implode(', '));
     }
 }

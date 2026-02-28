@@ -4,12 +4,14 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
+  SafeAreaView,
   StyleSheet,
   View,
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { API_BASE_URL } from '@/constants/config';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -66,8 +68,7 @@ export default function FeesScreen() {
     setError(null);
 
     try {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/api/auth/fees`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/fees`, {
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${token}`,
