@@ -23,12 +23,9 @@ import { getCsrfToken } from '@/lib/csrf';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { BreadcrumbItem } from '@/types';
 
-const GUARDIAN_RELATIONSHIPS = ['Father', 'Mother', 'Guardian', 'Other'];
-
 type ExtraGuardian = {
     name: string;
     phone: string;
-    relationship: string;
 };
 
 type Student = {
@@ -80,7 +77,7 @@ export default function AdminClassesIndex() {
     const [editStudentClassId, setEditStudentClassId] = useState('');
     const [editStudentGuardianName, setEditStudentGuardianName] = useState('');
     const [editStudentGuardianPhone, setEditStudentGuardianPhone] = useState('');
-    const [editStudentGuardianRelationship, setEditStudentGuardianRelationship] = useState('');
+    const [editStudentGuardianRelationship] = useState('');
     const [editStudentExtraGuardians, setEditStudentExtraGuardians] = useState<ExtraGuardian[]>([]);
     const [editStudentSubmitting, setEditStudentSubmitting] = useState(false);
     const [editStudentError, setEditStudentError] = useState<string | null>(null);
@@ -308,7 +305,7 @@ export default function AdminClassesIndex() {
         setEditStudentClassId(student.class_id?.toString() ?? '');
         setEditStudentGuardianName(student.guardian_name ?? '');
         setEditStudentGuardianPhone(student.guardian_phone ?? '');
-        setEditStudentGuardianRelationship(student.guardian_relationship ?? '');
+        setEditStudentGuardianRelationship('');
         setEditStudentExtraGuardians(student.extra_guardians ?? []);
         setEditStudentError(null);
     }
@@ -341,14 +338,13 @@ export default function AdminClassesIndex() {
             if (editStudentClassId) body.class_id = parseInt(editStudentClassId);
             body.guardian_name = editStudentGuardianName || null;
             body.guardian_phone = editStudentGuardianPhone || null;
-            body.guardian_relationship = editStudentGuardianRelationship || null;
+            // Relationship field no longer used in UI; keep null on backend.
             const cleanedExtra = editStudentExtraGuardians
                 .map((g) => ({
                     name: g.name.trim(),
                     phone: g.phone.trim(),
-                    relationship: g.relationship,
                 }))
-                .filter((g) => g.name || g.phone || g.relationship);
+                .filter((g) => g.name || g.phone);
             if (cleanedExtra.length > 0) body.extra_guardians = cleanedExtra;
 
             const res = await fetch(`/admin/api/students/${editingStudent.id}`, {
@@ -683,22 +679,7 @@ export default function AdminClassesIndex() {
                                     onChange={(e) => setEditStudentGuardianPhone(e.target.value)}
                                 />
                             </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="edit-student-guardian-relationship">Relationship</Label>
-                                <select
-                                    id="edit-student-guardian-relationship"
-                                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    value={editStudentGuardianRelationship}
-                                    onChange={(e) => setEditStudentGuardianRelationship(e.target.value)}
-                                >
-                                    <option value="">Select relationship</option>
-                                    {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                        <option key={rel} value={rel}>
-                                            {rel}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                            {/* Relationship removed – only name & phone are editable. */}
                         </div>
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
@@ -722,7 +703,7 @@ export default function AdminClassesIndex() {
                                     {editStudentExtraGuardians.map((g, index) => (
                                         <div
                                             key={index}
-                                            className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                                className="grid gap-2 md:grid-cols-[2fr,2fr,auto]"
                                         >
                                             <Input
                                                 placeholder="Guardian name"
@@ -746,24 +727,7 @@ export default function AdminClassesIndex() {
                                                     )
                                                 }
                                             />
-                                            <select
-                                                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                                value={g.relationship}
-                                                onChange={(e) =>
-                                                    setEditStudentExtraGuardians((prev) =>
-                                                        prev.map((item, i) =>
-                                                            i === index ? { ...item, relationship: e.target.value } : item,
-                                                        ),
-                                                    )
-                                                }
-                                            >
-                                                <option value="">Relationship</option>
-                                                {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                                    <option key={rel} value={rel}>
-                                                        {rel}
-                                                    </option>
-                                                ))}
-                                            </select>
+                                            {/* Relationship field removed – only name & phone are stored. */}
                                             <Button
                                                 type="button"
                                                 variant="ghost"

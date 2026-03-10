@@ -34,13 +34,15 @@ type ManagedUser = User & {
     roles?: { name: string }[];
     school_class?: SchoolClass;
     extra_guardians?: ExtraGuardian[];
+    guardian_name?: string;
+    guardian_phone?: string;
+    guardian_relationship?: string;
+    class_id?: number;
 };
 
 type PaginatedResponse = {
     data: ManagedUser[];
 };
-
-const GUARDIAN_RELATIONSHIPS = ['Father', 'Mother', 'Guardian', 'Other'];
 
 const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Dashboard', href: '/admin/dashboard' },
@@ -112,6 +114,8 @@ export default function AdminStudentsIndex() {
     const [loadingDuplicates, setLoadingDuplicates] = useState(false);
     const [selectedDuplicateIds, setSelectedDuplicateIds] = useState<Set<number>>(new Set());
     const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+    // Main table bulk selection state
+    const [selectedStudentIds, setSelectedStudentIds] = useState<Set<number>>(new Set());
 
     // Fetch classes (uses admin API so student-admins with "manage classes" can access)
     useEffect(() => {
@@ -137,7 +141,9 @@ export default function AdminStudentsIndex() {
     const fetchList = useCallback(async () => {
         const params = new URLSearchParams();
         if (search) params.set('search', search);
-        const response = await fetch(`/admin/api/students?${params}`, {
+        // Limit to 50 students per page for better performance.
+        params.set('per_page', '50');
+        const response = await fetch(`/admin/api/students?${params.toString()}`, {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         });
@@ -147,7 +153,8 @@ export default function AdminStudentsIndex() {
     }, [search]);
 
     const fetchAllStudents = useCallback(async () => {
-        const response = await fetch('/admin/api/students', {
+        // Load up to 50 students for the main table.
+        const response = await fetch('/admin/api/students?per_page=50', {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         });
@@ -253,7 +260,7 @@ export default function AdminStudentsIndex() {
                 .map((g) => ({
                     name: g.name.trim(),
                     phone: g.phone.trim(),
-                    relationship: g.relationship,
+                    relationship: g.relationship.trim(),
                 }))
                 .filter((g) => g.name || g.phone || g.relationship);
             if (cleanedExtra.length > 0) {
@@ -276,6 +283,7 @@ export default function AdminStudentsIndex() {
             }
             const { user } = (await res.json()) as { user: ManagedUser };
             setList((prev) => [...prev, user]);
+            setAllStudents((prev) => [...prev, user]);
             setName('');
             setClassId('');
             setGuardianName('');
@@ -324,7 +332,7 @@ export default function AdminStudentsIndex() {
                 .map((g) => ({
                     name: g.name.trim(),
                     phone: g.phone.trim(),
-                    relationship: g.relationship,
+                    relationship: g.relationship.trim(),
                 }))
                 .filter((g) => g.name || g.phone || g.relationship);
             if (cleanedExtra.length > 0) {
@@ -347,6 +355,7 @@ export default function AdminStudentsIndex() {
             }
             const { user: updated } = (await res.json()) as { user: ManagedUser };
             setList((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+            setAllStudents((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
             setEditing(null);
         } catch (err) {
             setEditError(err instanceof Error ? err.message : 'An unexpected error occurred.');
@@ -370,6 +379,11 @@ export default function AdminStudentsIndex() {
             if (res.ok) {
                 setList((prev) => prev.filter((u) => u.id !== user.id));
                 setAllStudents((prev) => prev.filter((u) => u.id !== user.id));
+                setSelectedStudentIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(user.id);
+                    return next;
+                });
                 fetchDuplicates().then(setDuplicateGroups);
             }
         } catch {
@@ -422,6 +436,86 @@ export default function AdminStudentsIndex() {
             setDuplicateGroups(groups);
         } catch {
             setError('Failed to delete duplicate students.');
+        } finally {
+            setDeletingDuplicates(false);
+        }
+    }
+
+    function toggleStudentSelection(id: number) {
+        setSelectedStudentIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    }
+
+    function toggleSelectAllVisible() {
+        if (displayedStudents.length === 0) {
+            return;
+        }
+        const visibleIds = new Set(displayedStudents.map((s) => s.id));
+        const allSelected = Array.from(visibleIds).every((id) => selectedStudentIds.has(id));
+        if (allSelected) {
+            // Clear only visible IDs from selection.
+            setSelectedStudentIds((prev) => {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.delete(id));
+                return next;
+            });
+        } else {
+            // Select all visible IDs in addition to any already selected.
+            setSelectedStudentIds((prev) => {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.add(id));
+                return next;
+            });
+        }
+    }
+
+    async function handleBulkDeleteSelectedStudents() {
+        if (!canManage || selectedStudentIds.size === 0) {
+            return;
+        }
+        if (
+            !window.confirm(
+                `Delete ${selectedStudentIds.size} student account${
+                    selectedStudentIds.size === 1 ? '' : 's'
+                }? This cannot be undone.`,
+            )
+        ) {
+            return;
+        }
+
+        setDeletingDuplicates(true);
+        setError(null);
+        try {
+            const csrf = getCsrfToken();
+            const ids = Array.from(selectedStudentIds);
+            const res = await fetch('/admin/api/students/bulk', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ ids }),
+            });
+            if (!res.ok) {
+                throw new Error('Failed to delete students');
+            }
+            await res.json();
+            setSelectedStudentIds(new Set());
+            setList((prev) => prev.filter((u) => !ids.includes(u.id)));
+            setAllStudents((prev) => prev.filter((u) => !ids.includes(u.id)));
+            const groups = await fetchDuplicates();
+            setDuplicateGroups(groups);
+        } catch {
+            setError('Failed to delete selected students.');
         } finally {
             setDeletingDuplicates(false);
         }
@@ -558,7 +652,7 @@ export default function AdminStudentsIndex() {
                                     </p>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="guardian-relationship">Guardian relationship</Label>
+                                    <Label htmlFor="guardian-relationship">Relationship to student</Label>
                                     <select
                                         id="guardian-relationship"
                                         className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -566,11 +660,15 @@ export default function AdminStudentsIndex() {
                                         onChange={(e) => setGuardianRelationship(e.target.value)}
                                     >
                                         <option value="">Select relationship</option>
-                                        {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                            <option key={rel} value={rel}>
-                                                {rel}
-                                            </option>
-                                        ))}
+                                        <option value="Mother">Mother</option>
+                                        <option value="Father">Father</option>
+                                        <option value="Guardian">Guardian</option>
+                                        <option value="Grandmother">Grandmother</option>
+                                        <option value="Grandfather">Grandfather</option>
+                                        <option value="Aunt">Aunt</option>
+                                        <option value="Uncle">Uncle</option>
+                                        <option value="Sibling">Sibling</option>
+                                        <option value="Other">Other</option>
                                     </select>
                                 </div>
                                 <div className="space-y-2">
@@ -608,7 +706,7 @@ export default function AdminStudentsIndex() {
                                             {extraGuardians.map((g, index) => (
                                                 <div
                                                     key={index}
-                                                    className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                                    className="grid gap-2 md:grid-cols-[2fr,2fr,1.5fr,auto]"
                                                 >
                                                     <Input
                                                         placeholder="Guardian name"
@@ -659,11 +757,15 @@ export default function AdminStudentsIndex() {
                                                         }
                                                     >
                                                         <option value="">Relationship</option>
-                                                        {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                                            <option key={rel} value={rel}>
-                                                                {rel}
-                                                            </option>
-                                                        ))}
+                                                        <option value="Mother">Mother</option>
+                                                        <option value="Father">Father</option>
+                                                        <option value="Guardian">Guardian</option>
+                                                        <option value="Grandmother">Grandmother</option>
+                                                        <option value="Grandfather">Grandfather</option>
+                                                        <option value="Aunt">Aunt</option>
+                                                        <option value="Uncle">Uncle</option>
+                                                        <option value="Sibling">Sibling</option>
+                                                        <option value="Other">Other</option>
                                                     </select>
                                                     <Button
                                                         type="button"
@@ -699,7 +801,9 @@ export default function AdminStudentsIndex() {
                         <CardHeader>
                             <CardTitle>Import students from CSV</CardTitle>
                             <p className="text-sm text-muted-foreground">
-                                Upload a CSV or Excel (.xlsx) file. First row must include: full_name (required), then any of class_name, guardian_name, guardian_phone, guardian_relationship
+                                Upload a CSV or Excel (.xlsx) file. First row must include: full_name (required), then any
+                                of class_name and up to three pairs of guardian_name / guardian_phone (for example:
+                                Guardian Name, Phone Number, Guardian Name, Phone Number, ...).
                             </p>
                         </CardHeader>
                         <CardContent>
@@ -853,28 +957,57 @@ export default function AdminStudentsIndex() {
                         </p>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="flex gap-2">
-                            <Input
-                                placeholder="Search by name, email or phone..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="max-w-sm"
-                            />
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() => fetchList().then(setList)}
-                            >
-                                Search
-                            </Button>
-                            {search && (
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div className="flex gap-2">
+                                <Input
+                                    placeholder="Search by name, email or phone..."
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    className="max-w-sm"
+                                />
                                 <Button
                                     type="button"
-                                    variant="ghost"
-                                    onClick={() => setSearch('')}
+                                    variant="secondary"
+                                    onClick={() => fetchList().then(setList)}
                                 >
-                                    Clear
+                                    Search
                                 </Button>
+                                {search && (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() => setSearch('')}
+                                    >
+                                        Clear
+                                    </Button>
+                                )}
+                            </div>
+                            {canManage && displayedStudents.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={toggleSelectAllVisible}
+                                    >
+                                        {displayedStudents.every((s) => selectedStudentIds.has(s.id))
+                                            ? 'Clear selection on page'
+                                            : 'Select all on page'}
+                                    </Button>
+                                    {selectedStudentIds.size > 0 && (
+                                        <Button
+                                            type="button"
+                                            variant="destructive"
+                                            size="sm"
+                                            disabled={deletingDuplicates}
+                                            onClick={handleBulkDeleteSelectedStudents}
+                                        >
+                                            {deletingDuplicates
+                                                ? 'Deleting...'
+                                                : `Delete selected (${selectedStudentIds.size})`}
+                                        </Button>
+                                    )}
+                                </div>
                             )}
                         </div>
                         {loading || loadingAll ? (
@@ -886,6 +1019,19 @@ export default function AdminStudentsIndex() {
                                 <table className="min-w-full text-sm">
                                     <thead>
                                         <tr className="border-b text-left">
+                                            {canManage && (
+                                                <th className="py-2 pr-2 w-8">
+                                                    <Checkbox
+                                                        checked={
+                                                            displayedStudents.length > 0 &&
+                                                            displayedStudents.every((s) =>
+                                                                selectedStudentIds.has(s.id),
+                                                            )
+                                                        }
+                                                        onCheckedChange={toggleSelectAllVisible}
+                                                    />
+                                                </th>
+                                            )}
                                             <th className="py-2 pr-4">Name</th>
                                             <th className="py-2 pr-4">Email</th>
                                             <th className="py-2 pr-4">Class</th>
@@ -901,6 +1047,14 @@ export default function AdminStudentsIndex() {
                                                     key={user.id} 
                                                     className={`border-b last:border-0 ${isSearchResult ? 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' : ''}`}
                                                 >
+                                                    {canManage && (
+                                                        <td className="py-2 pr-2 w-8">
+                                                            <Checkbox
+                                                                checked={selectedStudentIds.has(user.id)}
+                                                                onCheckedChange={() => toggleStudentSelection(user.id)}
+                                                            />
+                                                        </td>
+                                                    )}
                                                     <td className="py-2 pr-4 font-medium">{user.name}</td>
                                                     <td className="py-2 pr-4 text-sm text-muted-foreground">{user.email}</td>
                                                     <td className="py-2 pr-4">{user.school_class?.name ?? '—'}</td>
@@ -917,7 +1071,6 @@ export default function AdminStudentsIndex() {
                                                                         <div key={i}>
                                                                             {g.name || 'Guardian'}{' '}
                                                                             {g.phone ? `(${g.phone})` : ''}
-                                                                            {g.relationship ? ` – ${g.relationship}` : ''}
                                                                         </div>
                                                                     ))}
                                                                 </div>
@@ -1005,7 +1158,7 @@ export default function AdminStudentsIndex() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="edit-guardian-relationship">Relationship</Label>
+                                <Label htmlFor="edit-guardian-relationship">Relationship to student</Label>
                                 <select
                                     id="edit-guardian-relationship"
                                     className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -1013,11 +1166,15 @@ export default function AdminStudentsIndex() {
                                     onChange={(e) => setEditGuardianRelationship(e.target.value)}
                                 >
                                     <option value="">Select relationship</option>
-                                    {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                        <option key={rel} value={rel}>
-                                            {rel}
-                                        </option>
-                                    ))}
+                                    <option value="Mother">Mother</option>
+                                    <option value="Father">Father</option>
+                                    <option value="Guardian">Guardian</option>
+                                    <option value="Grandmother">Grandmother</option>
+                                    <option value="Grandfather">Grandfather</option>
+                                    <option value="Aunt">Aunt</option>
+                                    <option value="Uncle">Uncle</option>
+                                    <option value="Sibling">Sibling</option>
+                                    <option value="Other">Other</option>
                                 </select>
                             </div>
                             <div className="space-y-2">
@@ -1061,7 +1218,7 @@ export default function AdminStudentsIndex() {
                                         {editExtraGuardians.map((g, index) => (
                                             <div
                                                 key={index}
-                                                className="grid gap-2 md:grid-cols-[2fr,2fr,1fr,auto]"
+                                            className="grid gap-2 md:grid-cols-[2fr,2fr,1.5fr,auto]"
                                             >
                                                 <Input
                                                     placeholder="Guardian name"
@@ -1083,7 +1240,7 @@ export default function AdminStudentsIndex() {
                                                         setEditExtraGuardians((prev) =>
                                                             prev.map((item, i) =>
                                                                 i === index
-                                                                    ? { ...item, phone: e.target.value }
+                                                                ? { ...item, phone: e.target.value }
                                                                     : item,
                                                             ),
                                                         )
@@ -1096,18 +1253,25 @@ export default function AdminStudentsIndex() {
                                                         setEditExtraGuardians((prev) =>
                                                             prev.map((item, i) =>
                                                                 i === index
-                                                                    ? { ...item, relationship: e.target.value }
+                                                                    ? {
+                                                                          ...item,
+                                                                          relationship: e.target.value,
+                                                                      }
                                                                     : item,
                                                             ),
                                                         )
                                                     }
                                                 >
                                                     <option value="">Relationship</option>
-                                                    {GUARDIAN_RELATIONSHIPS.map((rel) => (
-                                                        <option key={rel} value={rel}>
-                                                            {rel}
-                                                        </option>
-                                                    ))}
+                                                    <option value="Mother">Mother</option>
+                                                    <option value="Father">Father</option>
+                                                    <option value="Guardian">Guardian</option>
+                                                    <option value="Grandmother">Grandmother</option>
+                                                    <option value="Grandfather">Grandfather</option>
+                                                    <option value="Aunt">Aunt</option>
+                                                    <option value="Uncle">Uncle</option>
+                                                    <option value="Sibling">Sibling</option>
+                                                    <option value="Other">Other</option>
                                                 </select>
                                                 <Button
                                                     type="button"

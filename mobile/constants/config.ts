@@ -4,8 +4,8 @@ import Constants from 'expo-constants';
  * API base URL for the Laravel backend.
  *
  * Priority:
- * 1. EXPO_PUBLIC_API_URL from env (recommended for production).
- * 2. Infer LAN IP from Expo dev server hostUri and use port 8000.
+ * 1. EXPO_PUBLIC_API_URL from env (recommended for production / staging).
+ * 2. Infer LAN IP from Expo dev server hostUri and use port 8000 (preferred for local dev).
  * 3. Fallback to http://localhost:8000 (for simulators hitting local machine).
  */
 const inferredHost = (() => {
@@ -16,4 +16,6 @@ const inferredHost = (() => {
 })();
 
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? 'https://ad2d-102-135-173-96.ngrok-free.app' ?? inferredHost ?? 'http://localhost:8000';
+  process.env.EXPO_PUBLIC_API_URL ??
+  inferredHost ??
+  'http://localhost:8000';

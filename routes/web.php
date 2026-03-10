@@ -20,17 +20,21 @@ use App\Http\Controllers\Api\AdminFeeImportController;
 use App\Http\Controllers\Api\AdminFeeImportFromSpreadsheetController;
 use App\Http\Controllers\Api\AdminFeePreviewController;
 use App\Http\Controllers\Api\AdminUserController;
+use App\Http\Controllers\Api\BusController;
 use App\Http\Controllers\Api\FeeActivityController as ApiFeeActivityController;
 use App\Http\Controllers\Api\FeeClassController as ApiFeeClassController;
 use App\Http\Controllers\Api\LocationController as ApiLocationController;
+use App\Http\Controllers\Api\PayrollController as ApiPayrollController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ResultAnalyticsController;
 use App\Http\Controllers\Api\ResultImportController;
 use App\Http\Controllers\Api\ResultUpdateController;
 use App\Http\Controllers\Api\SchoolClassController as ApiSchoolClassController;
+use App\Http\Controllers\Api\StaffController as ApiStaffController;
+use App\Http\Controllers\Api\StaffDepartmentController as ApiStaffDepartmentController;
 use App\Http\Controllers\Api\StudentController as ApiStudentController;
 use App\Http\Controllers\Api\TeacherClassAssignmentController;
-use App\Http\Controllers\Api\TripController as ApiTripController;
+use App\Http\Controllers\Api\TransportTripController;
 use App\Http\Controllers\Transport\LocationController as TransportLocationPageController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -70,6 +74,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('admin/staff', [AdminStaffPageController::class, 'index'])
         ->middleware('permission:view staff')
         ->name('admin.staff.index');
+
+    // Staff Profiles & Payroll Management
+    Route::get('admin/staff/profiles', function () {
+        return Inertia::render('admin/staff/profiles');
+    })->middleware('permission:view staff|manage staff')
+        ->name('admin.staff.profiles');
+
+    Route::get('admin/payroll', function () {
+        return Inertia::render('admin/payroll/index');
+    })->middleware('permission:view payroll|manage payroll')
+        ->name('admin.payroll.index');
+
+    Route::get('admin/payroll/{id}', function ($id) {
+        return Inertia::render('admin/payroll/payslip', ['payrollId' => $id]);
+    })->middleware('permission:view payroll|manage payroll')
+        ->name('admin.payroll.show');
 
     Route::get('admin/teachers', [AdminTeachersPageController::class, 'index'])
         ->middleware('permission:view teachers')
@@ -111,9 +131,26 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('permission:view results|manage results|manage academics')
         ->name('admin.results.streams');
 
+    Route::get('transport', function () {
+        return redirect()->route('admin.transport.trips-monitor');
+    })->middleware('permission:manage transport|view transport')
+        ->name('transport');
+
     Route::get('admin/transport/trips', AdminTripPageController::class)
         ->middleware('permission:manage transport')
         ->name('admin.transport.trips.index');
+
+    Route::get('admin/transport/buses', fn () => Inertia::render('admin/transport/buses'))
+        ->middleware('permission:manage transport')
+        ->name('admin.transport.buses');
+
+    Route::get('admin/transport/route-planner', fn () => Inertia::render('admin/transport/route-planner'))
+        ->middleware('permission:manage transport')
+        ->name('admin.transport.route-planner');
+
+    Route::get('admin/transport/trips-monitor', fn () => Inertia::render('admin/transport/trips-monitor'))
+        ->middleware('permission:manage transport|view transport')
+        ->name('admin.transport.trips-monitor');
 
     // Driver / assistant location marking page (can also be used by admins during setup).
     Route::get('transport/mark-location', [TransportLocationPageController::class, 'index'])
@@ -128,9 +165,29 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('permissions', [PermissionController::class, 'index'])->name('admin.api.permissions.index');
         });
 
+        // Staff profiles (uses web session; same auth as other admin APIs)
+        Route::middleware('permission:view staff|manage staff')->group(function () {
+            Route::get('staff', [ApiStaffController::class, 'index'])->name('admin.api.staff.index');
+            Route::get('staff/{id}', [ApiStaffController::class, 'show'])->name('admin.api.staff.show');
+            Route::get('staff-departments', [ApiStaffDepartmentController::class, 'index'])->name('admin.api.staff-departments.index');
+        });
+        Route::middleware('permission:manage staff')->group(function () {
+            Route::post('staff', [ApiStaffController::class, 'store'])->name('admin.api.staff.store');
+            Route::match(['put', 'patch'], 'staff/{id}', [ApiStaffController::class, 'update'])->name('admin.api.staff.update');
+            Route::delete('staff/{id}', [ApiStaffController::class, 'destroy'])->name('admin.api.staff.destroy');
+        });
+
+        // Payroll calculate preview (for staff profile salary breakdown)
+        Route::middleware('permission:view staff|manage staff|manage payroll')->group(function () {
+            Route::post('payroll/calculate-preview', [ApiPayrollController::class, 'calculatePreview'])->name('admin.api.payroll.calculate-preview');
+        });
+
         // Transport management
         Route::middleware('permission:manage transport')->group(function () {
-            Route::apiResource('transport/trips', ApiTripController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
+            Route::apiResource('transport/buses', BusController::class);
+            Route::get('transport/buses/{bus}/students', [TransportTripController::class, 'studentsForBus']);
+            Route::get('transport/trips/students/unassigned', [TransportTripController::class, 'unassignedStudents']);
+            Route::apiResource('transport/trips', TransportTripController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
         });
 
         // Class management (used by admin/students UI & student-admins).

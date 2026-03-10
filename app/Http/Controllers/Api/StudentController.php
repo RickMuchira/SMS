@@ -61,8 +61,13 @@ class StudentController extends Controller
      */
     public function index(Request $request): Response
     {
-        $students = User::role('student')
+        $students = User::query()
             ->with(['roles', 'schoolClass'])
+            ->where(function ($query) {
+                $query->whereHas('roles', function ($q) {
+                    $q->where('name', 'student');
+                })->orWhereNotNull('class_id');
+            })
             ->orderBy('name')
             ->when($request->filled('search'), function ($query) use ($request) {
                 $search = $request->string('search');
@@ -76,6 +81,32 @@ class StudentController extends Controller
                 $query->where('class_id', $request->integer('class_id'));
             })
             ->paginate($request->integer('per_page', 20));
+        // Ensure all text fields are valid UTF-8 so JSON encoding never fails.
+        $students->getCollection()->transform(function (User $user) {
+            $user->name = self::cleanUtf8($user->name);
+            $user->email = self::cleanUtf8($user->email);
+            $user->guardian_name = self::cleanUtf8($user->guardian_name);
+            $user->guardian_phone = self::cleanUtf8($user->guardian_phone);
+            $user->guardian_relationship = self::cleanUtf8($user->guardian_relationship);
+
+            if (is_array($user->extra_guardians)) {
+                $user->extra_guardians = collect($user->extra_guardians)
+                    ->map(function (array $g) {
+                        return [
+                            'name' => self::cleanUtf8($g['name'] ?? null),
+                            'phone' => self::cleanUtf8($g['phone'] ?? null),
+                            'relationship' => self::cleanUtf8($g['relationship'] ?? null),
+                        ];
+                    })
+                    ->all();
+            }
+
+            if ($user->relationLoaded('schoolClass') && $user->schoolClass !== null) {
+                $user->schoolClass->name = self::cleanUtf8($user->schoolClass->name);
+            }
+
+            return $user;
+        });
 
         return response($students, Response::HTTP_OK);
     }
@@ -92,11 +123,11 @@ class StudentController extends Controller
             'class_id' => ['nullable', 'integer', 'exists:school_classes,id'],
             'guardian_name' => ['nullable', 'string', 'max:255'],
             'guardian_phone' => ['nullable', 'string', 'max:20'],
-            'guardian_relationship' => ['nullable', 'string', 'in:Father,Mother,Guardian,Other'],
+            'guardian_relationship' => ['nullable', 'string', 'max:50'],
             'extra_guardians' => ['nullable', 'array'],
             'extra_guardians.*.name' => ['required_with:extra_guardians.*.phone', 'string', 'max:255'],
             'extra_guardians.*.phone' => ['nullable', 'string', 'max:20'],
-            'extra_guardians.*.relationship' => ['nullable', 'string', 'in:Father,Mother,Guardian,Other'],
+            'extra_guardians.*.relationship' => ['nullable', 'string', 'max:50'],
         ]);
 
         // Auto-generate email if not provided
@@ -162,11 +193,11 @@ class StudentController extends Controller
             'class_id' => ['nullable', 'integer', 'exists:school_classes,id'],
             'guardian_name' => ['nullable', 'string', 'max:255'],
             'guardian_phone' => ['nullable', 'string', 'max:20'],
-            'guardian_relationship' => ['nullable', 'string', 'in:Father,Mother,Guardian,Other'],
+            'guardian_relationship' => ['nullable', 'string', 'max:50'],
             'extra_guardians' => ['nullable', 'array'],
             'extra_guardians.*.name' => ['required_with:extra_guardians.*.phone', 'string', 'max:255'],
             'extra_guardians.*.phone' => ['nullable', 'string', 'max:20'],
-            'extra_guardians.*.relationship' => ['nullable', 'string', 'in:Father,Mother,Guardian,Other'],
+            'extra_guardians.*.relationship' => ['nullable', 'string', 'max:50'],
         ]);
 
         if (array_key_exists('name', $validated)) {
@@ -217,7 +248,35 @@ class StudentController extends Controller
      */
     private static function normalizeHeaderKey(string $value): string
     {
+        // Strip UTF-8 BOM and other non-printable/control characters that can
+        // appear at the start of CSV / Excel-exported headers, then normalize.
+        $value = preg_replace('/^\xEF\xBB\xBF/u', '', $value) ?? $value;
+        $value = preg_replace('/[[:^print:]]/u', '', $value) ?? $value;
+        // Replace non-breaking spaces (U+00A0) with regular spaces so headers like "Phone Number"
+        // normalise correctly to phone_number.
+        $value = str_replace("\u{00A0}", ' ', $value);
+
         return str_replace(' ', '_', strtolower(trim($value)));
+    }
+
+    /**
+     * Clean a string to ensure it is valid UTF-8 and free of problematic control characters.
+     */
+    private static function cleanUtf8(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $converted = @mb_convert_encoding($value, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+        if ($converted === false) {
+            $converted = $value;
+        }
+
+        // Remove all control characters except newlines and tabs.
+        $converted = preg_replace('/[^\P{C}\n\t]/u', '', $converted) ?? $converted;
+
+        return $converted;
     }
 
     /**
@@ -230,20 +289,92 @@ class StudentController extends Controller
         $aliases = [
             'full_name' => ['full_name', 'fullname', 'student_name', 'studentname', 'name'],
             'class_name' => ['class_name', 'classname', 'class'],
-            'guardian_name' => ['guardian_name', 'guardianname'],
-            'guardian_phone' => ['guardian_phone', 'guardianphone', 'phone'],
-            'guardian_relationship' => ['guardian_relationship', 'guardianrelationship', 'relationship'],
+            'guardian_name' => [
+                'guardian_name',
+                'guardianname',
+                'guardian_1_name',
+                'guardian_2_name',
+                'guardian_3_name',
+                'guardian1_name',
+                'guardian2_name',
+                'guardian3_name',
+                'guardian_name_1',
+                'guardian_name_2',
+                'guardian_name_3',
+                'guardian_2_name',
+                'guardian_3_name',
+                'parent_name',
+                'parent_1_name',
+                'parent_2_name',
+                'mother_name',
+                'father_name',
+                'mothers_name',
+                'fathers_name',
+                'contact_name',
+                'emergency_contact',
+                'caregiver_name',
+                'name_of_guardian',
+                'name_of_parent',
+            ],
+            'guardian_phone' => [
+                'guardian_phone',
+                'guardianphone',
+                'phone',
+                'phone_number',
+                'phonenumber',
+                'phone_number_1',
+                'phone_number_2',
+                'phone_number_3',
+                'phone_2',
+                'phone_3',
+                'phone_numl', // Handle typo: phone_numl -> phone_number
+                'phone_num', // Handle shortened: phone_num -> phone_number
+                'parent_phone',
+                'parent_number',
+                'mother_phone',
+                'father_phone',
+                'contact_phone',
+                'contact_number',
+                'mobile',
+                'mobile_number',
+                'telephone',
+                'guardian_1_phone',
+                'guardian_2_phone',
+                'guardian_3_phone',
+                'guardian1_phone',
+                'guardian2_phone',
+                'guardian3_phone',
+            ],
+            'guardian_relationship' => [
+                'guardian_relationship',
+                'guardianrelationship',
+                'relationship',
+                'relationship_2',
+                'relationship_3',
+                'relation',
+                'relationship_to_student',
+                'relation_to_child',
+                'parent_type',
+                'guardian_type',
+            ],
         ];
         $headerToCanonical = [];
         foreach ($headers as $h) {
             $norm = self::normalizeHeaderKey((string) $h);
+            $matched = false;
             foreach ($aliases as $canonical => $variants) {
                 if (in_array($norm, $variants, true)) {
                     $headerToCanonical[$norm] = $canonical;
+                    $matched = true;
                     break;
                 }
             }
-            if (! isset($headerToCanonical[$norm])) {
+            // Fuzzy match for phone columns (handle common typos)
+            if (! $matched && preg_match('/^phone.*num/i', $norm)) {
+                $headerToCanonical[$norm] = 'guardian_phone';
+                $matched = true;
+            }
+            if (! $matched) {
                 $headerToCanonical[$norm] = $norm;
             }
         }
@@ -254,12 +385,18 @@ class StudentController extends Controller
     /**
      * Import students from CSV or Excel.
      *
-     * Expected columns: full_name (or Full Name, Name, etc.), class_name, guardian_name, guardian_phone, guardian_relationship
+     * Expected columns:
+     * - full_name (or Full Name, Name, Student Name, etc.) - required
+     * - class_name / Class - optional
+     * - One or more guardian_name / Guardian Name columns (up to 3), each followed by a guardian_phone / Phone Number column.
+     *
+     * The first guardian in the row becomes the primary guardian (guardian_name / guardian_phone on the user),
+     * and any additional guardians (up to 2 more) are stored in the extra_guardians JSON column.
      */
     public function import(Request $request): Response
     {
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
+            'file' => ['required', 'file', 'max:2048'],
         ]);
 
         $file = $request->file('file');
@@ -277,7 +414,7 @@ class StudentController extends Controller
                 return response(['message' => 'Could not open file.'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
-            $rawHeader = fgetcsv($handle);
+            $rawHeader = fgetcsv($handle, 0, ',', '"', '\\');
             if (! $rawHeader) {
                 fclose($handle);
 
@@ -287,40 +424,62 @@ class StudentController extends Controller
             $header = array_map(fn ($h) => self::normalizeHeaderKey((string) $h), $rawHeader);
             $headerToCanonical = self::mapHeadersToCanonical($rawHeader);
             $hasFullName = in_array('full_name', array_values($headerToCanonical), true);
+            if (! $hasFullName && isset($header[0]) && $header[0] !== '') {
+                // Fallback: assume first column is full_name to handle slightly malformed exports.
+                $headerToCanonical[$header[0]] = 'full_name';
+                $hasFullName = true;
+            }
             if (! $hasFullName) {
                 fclose($handle);
 
                 return response([
-                    'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone, guardian_relationship.',
+                    'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone.',
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
             $rows[] = $header;
-            while (($row = fgetcsv($handle)) !== false) {
+            while (($row = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
                 $rows[] = $row;
             }
 
             fclose($handle);
         } else {
-            // Excel (xlsx/xls)
-            $sheets = Excel::toArray(null, $file);
-            $sheet = $sheets[0] ?? [];
-            if (empty($sheet)) {
-                return response(['message' => 'Excel file is empty or invalid.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            // Excel/ODS (xlsx/xls/ods) — use PhpSpreadsheet's auto-detection so we correctly
+            // handle ODS files even when they are saved with a .xlsx extension.
+            try {
+                $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($file->getRealPath());
+                $reader->setReadDataOnly(true);
+                $spreadsheet = $reader->load($file->getRealPath());
+                $sheet = $spreadsheet->getActiveSheet()->toArray(null, true, true, false);
+                if (empty($sheet)) {
+                    return response([
+                        'message' => 'The uploaded spreadsheet appears to be empty.',
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+                $rows = $sheet;
+                $rawHeader = array_shift($rows);
+            } catch (\Throwable $e) {
+                Log::info('Student import: Excel/ODS read failed', [
+                    'error' => $e->getMessage(),
+                    'extension' => $extension,
+                ]);
+
+                return response([
+                    'message' => 'Could not read your Excel/ODS file. Please open it and ensure it is a valid spreadsheet, then try again.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
-            $rows = $sheet;
-            $rawHeader = array_shift($rows);
-            if (! $rawHeader) {
-                return response(['message' => 'Excel file is empty or invalid.'], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
+            // Excel/ODS read succeeded — build header map.
             $header = array_map(fn ($h) => self::normalizeHeaderKey((string) $h), $rawHeader);
             $headerToCanonical = self::mapHeadersToCanonical($rawHeader);
             $hasFullName = in_array('full_name', array_values($headerToCanonical), true);
+            if (! $hasFullName && isset($header[0]) && $header[0] !== '') {
+                $headerToCanonical[$header[0]] = 'full_name';
+                $hasFullName = true;
+            }
             if (! $hasFullName) {
                 return response([
-                    'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone, guardian_relationship.',
+                    'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Also include class_name (for example: Class) plus optional guardian_name / guardian_phone columns.',
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
@@ -338,6 +497,48 @@ class StudentController extends Controller
 
         $studentRole = Role::where('name', 'student')->first();
 
+        // Determine important column indices for structured parsing.
+        $fullNameIndex = null;
+        $classNameIndex = null;
+        $guardianColumns = []; // each: ['name' => ?int, 'phone' => ?int, 'relationship' => ?int]
+
+        foreach ($header as $index => $normKey) {
+            $canonical = $headerToCanonical[$normKey] ?? $normKey;
+            if ($canonical === 'full_name' && $fullNameIndex === null) {
+                $fullNameIndex = $index;
+            } elseif ($canonical === 'class_name' && $classNameIndex === null) {
+                $classNameIndex = $index;
+            } elseif ($canonical === 'guardian_name') {
+                $guardianColumns[] = ['name' => $index, 'phone' => null, 'relationship' => null];
+            } elseif ($canonical === 'guardian_phone') {
+                $lastIndex = count($guardianColumns) - 1;
+                if ($lastIndex >= 0 && $guardianColumns[$lastIndex]['phone'] === null) {
+                    $guardianColumns[$lastIndex]['phone'] = $index;
+                } else {
+                    $guardianColumns[] = ['name' => null, 'phone' => $index, 'relationship' => null];
+                }
+            } elseif ($canonical === 'guardian_relationship') {
+                $lastIndex = count($guardianColumns) - 1;
+                if ($lastIndex >= 0 && $guardianColumns[$lastIndex]['relationship'] === null) {
+                    $guardianColumns[$lastIndex]['relationship'] = $index;
+                } else {
+                    $guardianColumns[] = ['name' => null, 'phone' => null, 'relationship' => $index];
+                }
+            }
+        }
+
+        // Ensure guardian columns are processed left-to-right regardless of header ordering.
+        usort($guardianColumns, function (array $a, array $b): int {
+            $aIndex = min(
+                array_filter([$a['name'], $a['phone'], $a['relationship']], static fn ($v) => $v !== null) ?: [PHP_INT_MAX]
+            );
+            $bIndex = min(
+                array_filter([$b['name'], $b['phone'], $b['relationship']], static fn ($v) => $v !== null) ?: [PHP_INT_MAX]
+            );
+
+            return $aIndex <=> $bIndex;
+        });
+
         // First pass: parse rows and collect emails for bulk user lookup
         $dataRows = [];
         $lineNumber = 0;
@@ -346,32 +547,73 @@ class StudentController extends Controller
             if ($lineNumber === 1) {
                 continue;
             }
-            $padded = array_pad(array_map(fn ($v) => is_scalar($v) ? trim((string) $v) : '', $row), count($header), '');
-            $rawData = array_combine($header, array_slice($padded, 0, count($header)));
-            $data = [];
-            foreach ($rawData as $normKey => $value) {
-                $canonical = $headerToCanonical[$normKey] ?? $normKey;
-                $data[$canonical] = $value;
-            }
-            $fullName = trim($data['full_name'] ?? '');
-            $className = trim($data['class_name'] ?? '');
-            $guardianName = trim($data['guardian_name'] ?? '');
-            $guardianPhone = trim($data['guardian_phone'] ?? '');
-            $guardianRelationship = trim($data['guardian_relationship'] ?? '');
-            if (empty($fullName)) {
+
+            $padded = array_pad(
+                array_map(
+                    fn ($v) => is_scalar($v)
+                        ? trim((string) self::cleanUtf8((string) $v))
+                        : '',
+                    $row
+                ),
+                count($header),
+                ''
+            );
+
+            $fullName = $fullNameIndex !== null ? trim($padded[$fullNameIndex] ?? '') : '';
+            if ($fullName === '') {
                 $results['errors'][] = "Line {$lineNumber}: Missing full_name";
 
                 continue;
             }
+
+            $className = $classNameIndex !== null ? trim($padded[$classNameIndex] ?? '') : '';
+            if ($className === '') {
+                $results['errors'][] = "Line {$lineNumber}: Missing class_name";
+
+                continue;
+            }
+
+            // Collect up to 3 guardians from repeated guardian_name/guardian_phone columns.
+            $guardians = [];
+            foreach ($guardianColumns as $guardianColumn) {
+                $name = $guardianColumn['name'] !== null ? trim($padded[$guardianColumn['name']] ?? '') : '';
+                $phone = $guardianColumn['phone'] !== null ? trim($padded[$guardianColumn['phone']] ?? '') : '';
+                $relationship = $guardianColumn['relationship'] !== null ? trim($padded[$guardianColumn['relationship']] ?? '') : '';
+
+                if ($name === '' && $phone === '') {
+                    continue;
+                }
+
+                // Best-effort fix for Excel-stripped leading zeros on local phone numbers.
+                if ($phone !== '' && ctype_digit($phone) && str_starts_with($phone, '0') === false && strlen($phone) >= 9) {
+                    $phone = '0'.$phone;
+                }
+
+                $guardians[] = [
+                    'name' => $name,
+                    'phone' => $phone,
+                    'relationship' => $relationship,
+                ];
+
+                if (count($guardians) >= 3) {
+                    break;
+                }
+            }
+
+            $primaryGuardian = $guardians[0] ?? ['name' => '', 'phone' => '', 'relationship' => ''];
+            $extraGuardians = array_slice($guardians, 1);
+
             $generatedEmail = EmailGeneratorService::generateFromName($fullName);
             $baseEmail = EmailGeneratorService::getBaseEmailFromName($fullName);
+
             $dataRows[] = [
                 'line' => $lineNumber,
                 'full_name' => $fullName,
                 'class_name' => $className,
-                'guardian_name' => $guardianName,
-                'guardian_phone' => $guardianPhone,
-                'guardian_relationship' => $guardianRelationship,
+                'guardian_name' => $primaryGuardian['name'],
+                'guardian_phone' => $primaryGuardian['phone'],
+                'guardian_relationship' => $primaryGuardian['relationship'],
+                'extra_guardians' => $extraGuardians,
                 'email' => $generatedEmail,
                 'base_email' => $baseEmail,
             ];
@@ -400,6 +642,7 @@ class StudentController extends Controller
             $guardianName = $r['guardian_name'];
             $guardianPhone = $r['guardian_phone'];
             $guardianRelationship = $r['guardian_relationship'];
+            $extraGuardians = $r['extra_guardians'];
             $generatedEmail = $r['email'];
             $baseEmail = $r['base_email'];
 
@@ -421,9 +664,10 @@ class StudentController extends Controller
                     $existingUser->update([
                         'name' => $fullName,
                         'class_id' => $classId,
-                        'guardian_name' => $guardianName ?: null,
-                        'guardian_phone' => $guardianPhone ?: null,
-                        'guardian_relationship' => $guardianRelationship ?: null,
+                        'guardian_name' => $guardianName !== '' ? $guardianName : null,
+                        'guardian_phone' => $guardianPhone !== '' ? $guardianPhone : null,
+                        'guardian_relationship' => $guardianRelationship !== '' ? $guardianRelationship : null,
+                        'extra_guardians' => $extraGuardians !== [] ? $extraGuardians : null,
                     ]);
                     $results['updated']++;
                     // So next row with same email finds this user if we created in this run
@@ -437,9 +681,10 @@ class StudentController extends Controller
                         'email' => $generatedEmail,
                         'password' => Hash::make($password),
                         'class_id' => $classId,
-                        'guardian_name' => $guardianName ?: null,
-                        'guardian_phone' => $guardianPhone ?: null,
-                        'guardian_relationship' => $guardianRelationship ?: null,
+                        'guardian_name' => $guardianName !== '' ? $guardianName : null,
+                        'guardian_phone' => $guardianPhone !== '' ? $guardianPhone : null,
+                        'guardian_relationship' => $guardianRelationship !== '' ? $guardianRelationship : null,
+                        'extra_guardians' => $extraGuardians !== [] ? $extraGuardians : null,
                     ]);
                     if ($studentRole) {
                         $user->assignRole($studentRole);

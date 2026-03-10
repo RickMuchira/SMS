@@ -1,18 +1,22 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BusController;
 use App\Http\Controllers\Api\DriverController;
 use App\Http\Controllers\Api\FeeController;
 use App\Http\Controllers\Api\ModuleController;
+use App\Http\Controllers\Api\PayrollController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ResultController;
 use App\Http\Controllers\Api\RoleAssignmentController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SchoolClassController;
 use App\Http\Controllers\Api\StaffController;
+use App\Http\Controllers\Api\StaffDepartmentController;
 use App\Http\Controllers\Api\StudentController;
 use App\Http\Controllers\Api\SystemSettingController;
 use App\Http\Controllers\Api\TeachersController;
+use App\Http\Controllers\Api\TransportTripController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
@@ -82,11 +86,58 @@ Route::middleware(['auth'])->group(function (): void {
 
     Route::apiResource('drivers', DriverController::class);
 
+    // Staff departments
+    Route::apiResource('departments', StaffDepartmentController::class);
+
+    // Payroll routes
+    Route::middleware('permission:manage payroll')->group(function (): void {
+        Route::get('payroll', [PayrollController::class, 'index']);
+        Route::post('payroll/generate', [PayrollController::class, 'generate']);
+        Route::get('payroll/{payroll}', [PayrollController::class, 'show']);
+        Route::post('payroll/{payroll}/approve', [PayrollController::class, 'approve']);
+        Route::post('payroll/{payroll}/mark-paid', [PayrollController::class, 'markAsPaid']);
+        Route::delete('payroll/{payroll}', [PayrollController::class, 'destroy']);
+        Route::post('payroll/calculate-preview', [PayrollController::class, 'calculatePreview']);
+    });
+
     // System settings (public read, super-admin write)
     Route::get('system-settings', [SystemSettingController::class, 'index']);
     Route::middleware('role:super-admin')->group(function (): void {
         Route::post('system-settings', [SystemSettingController::class, 'update']);
         Route::delete('system-settings/logo', [SystemSettingController::class, 'deleteLogo']);
     });
+
+    // Transport Module routes
+    Route::prefix('transport')->group(function (): void {
+        // Bus management (admin only)
+        Route::middleware('permission:manage transport')->group(function (): void {
+            Route::apiResource('buses', BusController::class);
+            Route::get('trips/students/unassigned', [TransportTripController::class, 'unassignedStudents']);
+            Route::get('buses/{bus}/students', [TransportTripController::class, 'studentsForBus']);
+        });
+
+        // Trip management (admin and planners)
+        Route::middleware('permission:manage transport|view transport')->group(function (): void {
+            Route::get('trips', [TransportTripController::class, 'index']);
+            Route::get('trips/{trip}', [TransportTripController::class, 'show']);
+        });
+
+        Route::middleware('permission:manage transport')->group(function (): void {
+            Route::post('trips', [TransportTripController::class, 'store']);
+            Route::match(['put', 'patch'], 'trips/{trip}', [TransportTripController::class, 'update']);
+            Route::delete('trips/{trip}', [TransportTripController::class, 'destroy']);
+        });
+
+        // Stop status updates (drivers and assistants)
+        Route::middleware('permission:execute trips')->group(function (): void {
+            Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+        });
+    });
 }
 );
+
+// Mobile API routes for drivers/assistants
+Route::middleware(['auth:sanctum'])->prefix('mobile/transport')->group(function (): void {
+    Route::get('trips/today', [TransportTripController::class, 'todaysTrips']);
+    Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+});

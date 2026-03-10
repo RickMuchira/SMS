@@ -176,10 +176,18 @@ class AdminUserController extends Controller
 
                 // Assign the role to the user
                 $user->syncRoles([$role->name]);
+
+                // Preserve staff role for users with a StaffProfile (they remain staff regardless of admin roles)
+                if ($user->staffProfile()->exists() && ! $user->hasRole('staff')) {
+                    $user->assignRole('staff');
+                }
             } else {
-                // Remove all permissions and roles
+                // Remove all permissions and roles (but keep staff if they have a StaffProfile)
                 $user->syncPermissions([]);
                 $user->syncRoles([]);
+                if ($user->staffProfile()->exists()) {
+                    $user->assignRole('staff');
+                }
             }
         }
 

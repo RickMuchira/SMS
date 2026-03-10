@@ -65,7 +65,7 @@ export default function Dashboard() {
                                 </Link>
                             </Button>
                             <Button asChild variant="outline" size="sm" className="gap-2">
-                                <Link href="/admin/staff">
+                                <Link href="/admin/staff/profiles">
                                     Staff & Teachers
                                     <ArrowRight className="size-4" />
                                 </Link>

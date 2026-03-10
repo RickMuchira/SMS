@@ -70,7 +70,7 @@ export function AppSidebar() {
             ? [
                   {
                       title: 'Staff & Teachers',
-                      href: '/admin/staff',
+                      href: '/admin/staff/profiles',
                       icon: GraduationCap,
                   } satisfies NavItem,
               ]

@@ -19,8 +19,24 @@ class Trip extends Model
         'driver_id',
         'assistant_id',
         'departure_time',
+        'bus_id',
+        'trip_date',
+        'start_time',
+        'end_time',
         'status',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'trip_date' => 'date',
+        ];
+    }
+
+    public function bus(): BelongsTo
+    {
+        return $this->belongsTo(Bus::class);
+    }
 
     public function driver(): BelongsTo
     {
@@ -40,5 +56,10 @@ class Trip extends Model
     public function tracking(): HasOne
     {
         return $this->hasOne(TripTracking::class);
+    }
+
+    public function stops(): HasMany
+    {
+        return $this->hasMany(TripStop::class)->orderBy('order_sequence');
     }
 }
