@@ -75,11 +75,11 @@ export function AppSidebar() {
                   } satisfies NavItem,
               ]
             : []),
-        ...(canViewModule('drivers')
+        ...(hasPermission('view drivers') || hasPermission('manage drivers')
             ? [
                   {
-                      title: 'Drivers',
-                      href: '/drivers',
+                      title: 'Drivers & Assistants',
+                      href: '/admin/drivers',
                       icon: Bus,
                   } satisfies NavItem,
               ]

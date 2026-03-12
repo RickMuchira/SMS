@@ -1,19 +1,25 @@
 import { Head } from '@inertiajs/react';
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchableStaffSelect, type StaffOption } from '@/components/searchable-staff-select';
+import { getCsrfToken } from '@/lib/csrf';
 import AppLayout from '@/layouts/app-layout';
 import type { BreadcrumbItem } from '@/types';
-import { Map, Marker, Popup, Route, NavigationControl, useMap } from '@/components/ui/map';
-import { GripVertical, MapPin, X } from 'lucide-react';
+import { Map, Marker, Popup, Route, NavigationControl } from '@/components/ui/map';
+import { MapPin, X } from 'lucide-react';
 
 type Bus = {
     id: number;
     registration_number: string;
     capacity: number;
     status: string;
+    driver_id?: number | null;
+    assistant_id?: number | null;
+    driver?: { id: number; name: string } | null;
+    assistant?: { id: number; name: string } | null;
 };
 
 type Student = {
@@ -54,7 +60,8 @@ export default function RoutePlanner() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [drivers, setDrivers] = useState<{ id: number; name: string }[]>([]);
+    const [driverOptions, setDriverOptions] = useState<StaffOption[]>([]);
+    const [assistantOptions, setAssistantOptions] = useState<StaffOption[]>([]);
 
     useEffect(() => {
         Promise.all([
@@ -62,16 +69,26 @@ export default function RoutePlanner() {
                 headers: { Accept: 'application/json' },
                 credentials: 'same-origin',
             }).then((r) => r.json()),
-            fetch('/admin/api/staff?role=driver', {
+            fetch('/admin/api/transport/drivers', {
                 headers: { Accept: 'application/json' },
                 credentials: 'same-origin',
-            })
-                .then((r) => r.json())
-                .catch(() => ({ data: [] })),
+            }).then((r) => r.json()),
+            fetch('/admin/api/transport/assistants', {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            }).then((r) => r.json()),
         ])
-            .then(([busesData, staffData]) => {
+            .then(([busesData, driversData, assistantsData]) => {
                 setBuses(busesData.data || []);
-                setDrivers(staffData.data || []);
+                const drivers = (driversData.data || []).map((u: { id: number; name: string }) => ({
+                    id: u.id,
+                    name: u.name,
+                })) as StaffOption[];
+                const assistants = (assistantsData.data || []).map(
+                    (u: { id: number; name: string }) => ({ id: u.id, name: u.name }),
+                ) as StaffOption[];
+                setDriverOptions(drivers);
+                setAssistantOptions(assistants);
             })
             .catch(() => setError('Failed to load initial data'));
     }, []);
@@ -132,11 +149,13 @@ export default function RoutePlanner() {
         setError(null);
 
         try {
+            const csrf = getCsrfToken();
             const response = await fetch('/admin/api/transport/trips', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
                 },
                 credentials: 'same-origin',
                 body: JSON.stringify({
@@ -208,11 +227,16 @@ export default function RoutePlanner() {
                                         id="bus"
                                         className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                         value={selectedBusId}
-                                        onChange={(e) =>
-                                            setSelectedBusId(
-                                                e.target.value ? Number(e.target.value) : '',
-                                            )
-                                        }
+                                        onChange={(e) => {
+                                            const id = e.target.value ? Number(e.target.value) : '';
+                                            setSelectedBusId(id);
+                                            if (id) {
+                                                const bus = buses.find((b) => b.id === id);
+                                                if (bus?.driver_id) setDriverId(bus.driver_id);
+                                                if (bus?.assistant_id)
+                                                    setAssistantId(bus.assistant_id);
+                                            }
+                                        }}
                                     >
                                         <option value="">Select bus</option>
                                         {buses.map((bus) => (
@@ -248,45 +272,24 @@ export default function RoutePlanner() {
                                     />
                                 </div>
 
-                                <div className="space-y-2">
-                                    <Label htmlFor="driver">Driver</Label>
-                                    <select
-                                        id="driver"
-                                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                        value={driverId}
-                                        onChange={(e) =>
-                                            setDriverId(e.target.value ? Number(e.target.value) : '')
-                                        }
-                                    >
-                                        <option value="">Select driver</option>
-                                        {drivers.map((driver) => (
-                                            <option key={driver.id} value={driver.id}>
-                                                {driver.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
+                                <SearchableStaffSelect
+                                    staff={driverOptions}
+                                    value={driverId}
+                                    onChange={(id) => setDriverId(id)}
+                                    label="Driver"
+                                    placeholder="Search by name..."
+                                    emptyOption="Select driver"
+                                    required
+                                />
 
-                                <div className="space-y-2">
-                                    <Label htmlFor="assistant">Assistant (Optional)</Label>
-                                    <select
-                                        id="assistant"
-                                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                        value={assistantId}
-                                        onChange={(e) =>
-                                            setAssistantId(
-                                                e.target.value ? Number(e.target.value) : '',
-                                            )
-                                        }
-                                    >
-                                        <option value="">No assistant</option>
-                                        {drivers.map((driver) => (
-                                            <option key={driver.id} value={driver.id}>
-                                                {driver.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
+                                <SearchableStaffSelect
+                                    staff={assistantOptions}
+                                    value={assistantId}
+                                    onChange={(id) => setAssistantId(id)}
+                                    label="Assistant (Optional)"
+                                    placeholder="Search by name..."
+                                    emptyOption="No assistant"
+                                />
 
                                 <div className="space-y-2">
                                     <Label htmlFor="start-time">Start Time</Label>

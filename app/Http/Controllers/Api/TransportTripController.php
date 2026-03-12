@@ -7,6 +7,7 @@ use App\Models\Bus;
 use App\Models\Trip;
 use App\Models\TripStop;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -52,6 +53,7 @@ class TransportTripController extends Controller
             'driver_id' => ['required', 'exists:users,id'],
             'assistant_id' => ['nullable', 'exists:users,id'],
             'start_time' => ['nullable', 'date_format:H:i'],
+            'end_time' => ['nullable', 'date_format:H:i'],
             'stops' => ['required', 'array', 'min:1'],
             'stops.*.student_id' => ['required', 'exists:users,id'],
             'stops.*.order_sequence' => ['required', 'integer', 'min:1'],
@@ -60,6 +62,18 @@ class TransportTripController extends Controller
             'stops.*.address' => ['nullable', 'string'],
             'stops.*.pickup_notes' => ['nullable', 'string'],
         ]);
+
+        $conflict = $this->checkScheduleConflict(
+            $validated['trip_date'],
+            $validated['start_time'] ?? null,
+            $validated['end_time'] ?? null,
+            $validated['driver_id'],
+            $validated['assistant_id'] ?? null,
+            null
+        );
+        if ($conflict) {
+            return response()->json(['message' => $conflict], 422);
+        }
 
         $bus = Bus::findOrFail($validated['bus_id']);
 
@@ -73,6 +87,7 @@ class TransportTripController extends Controller
                 'driver_id' => $validated['driver_id'],
                 'assistant_id' => $validated['assistant_id'] ?? null,
                 'start_time' => $validated['start_time'] ?? null,
+                'end_time' => $validated['end_time'] ?? null,
                 'status' => 'planned',
             ]);
 
@@ -116,6 +131,26 @@ class TransportTripController extends Controller
             'end_time' => ['nullable', 'date_format:H:i'],
             'status' => ['sometimes', Rule::in(['planned', 'in_progress', 'completed', 'cancelled'])],
         ]);
+
+        $tripDate = $validated['trip_date'] ?? $trip->trip_date?->format('Y-m-d');
+        $startTime = $validated['start_time'] ?? $trip->start_time;
+        $endTime = $validated['end_time'] ?? $trip->end_time;
+        $driverId = $validated['driver_id'] ?? $trip->driver_id;
+        $assistantId = $validated['assistant_id'] ?? $trip->assistant_id;
+
+        if ($tripDate && ($driverId || $assistantId)) {
+            $conflict = $this->checkScheduleConflict(
+                $tripDate,
+                $startTime,
+                $endTime,
+                $driverId,
+                $assistantId,
+                $trip->id
+            );
+            if ($conflict) {
+                return response()->json(['message' => $conflict], 422);
+            }
+        }
 
         $trip->update($validated);
         $trip->load(['bus', 'driver', 'assistant', 'stops.student']);
@@ -196,5 +231,60 @@ class TransportTripController extends Controller
             ->get();
 
         return response()->json(['students' => $students]);
+    }
+
+    /**
+     * Check if assigning this driver/assistant on the given date and time would conflict with another trip.
+     * Returns an error message if conflict, null otherwise.
+     */
+    private function checkScheduleConflict(
+        string $tripDate,
+        ?string $startTime,
+        ?string $endTime,
+        ?int $driverId,
+        ?int $assistantId,
+        ?int $excludeTripId
+    ): ?string {
+        $start = $startTime
+            ? Carbon::parse($tripDate.' '.$startTime)
+            : Carbon::parse($tripDate)->startOfDay();
+        $end = $endTime
+            ? Carbon::parse($tripDate.' '.$endTime)
+            : $start->copy()->addHours(2);
+
+        $staffIds = array_filter([$driverId, $assistantId]);
+
+        foreach ($staffIds as $staffId) {
+            $overlapping = Trip::query()
+                ->whereDate('trip_date', $tripDate)
+                ->when($excludeTripId, fn ($q) => $q->where('id', '!=', $excludeTripId))
+                ->where(function ($q) use ($staffId) {
+                    $q->where('driver_id', $staffId)->orWhere('assistant_id', $staffId);
+                })
+                ->get();
+
+            foreach ($overlapping as $other) {
+                $otherDate = $other->trip_date instanceof \Carbon\Carbon
+                    ? $other->trip_date->format('Y-m-d')
+                    : (string) $other->trip_date;
+                $otherStart = $other->start_time
+                    ? Carbon::parse($otherDate.' '.$other->start_time)
+                    : Carbon::parse($otherDate)->startOfDay();
+                $otherEnd = $other->end_time
+                    ? Carbon::parse($otherDate.' '.$other->end_time)
+                    : $otherStart->copy()->addHours(2);
+
+                if ($start->lt($otherEnd) && $end->gt($otherStart)) {
+                    $role = $other->driver_id === $staffId ? 'driver' : 'assistant';
+                    $name = $other->driver_id === $staffId
+                        ? $other->driver?->name
+                        : $other->assistant?->name;
+
+                    return "Schedule conflict: This {$role} is already assigned to another trip at the same time (overlap with: {$other->name}).";
+                }
+            }
+        }
+
+        return null;
     }
 }

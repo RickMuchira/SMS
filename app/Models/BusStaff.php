@@ -5,21 +5,24 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class Bus extends Model
+class BusStaff extends Model
 {
-    /** @use HasFactory<\Database\Factories\BusFactory> */
+    /** @use HasFactory<\Database\Factories\BusStaffFactory> */
     use HasFactory;
 
     protected $fillable = [
-        'registration_number',
-        'capacity',
-        'status',
-        'notes',
+        'bus_id',
+        'type',
+        'trip_number',
         'driver_id',
         'assistant_id',
     ];
+
+    public function bus(): BelongsTo
+    {
+        return $this->belongsTo(Bus::class);
+    }
 
     public function driver(): BelongsTo
     {
@@ -29,15 +32,5 @@ class Bus extends Model
     public function assistant(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assistant_id');
-    }
-
-    public function trips(): HasMany
-    {
-        return $this->hasMany(Trip::class);
-    }
-
-    public function staffPresets(): HasMany
-    {
-        return $this->hasMany(BusStaff::class);
     }
 }

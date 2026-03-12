@@ -99,23 +99,22 @@ export default function AdminTransportTripsIndex() {
     }, [fetchTrips]);
 
     useEffect(() => {
-        // For now, derive drivers/assistants from existing trips.
-        // Later we can replace this with a dedicated API.
-        const uniqueUsers = new Map<number, SimpleUser>();
-        trips.forEach((trip) => {
-            if (trip.driver) {
-                uniqueUsers.set(trip.driver.id, trip.driver);
-            }
-            if (trip.assistant) {
-                uniqueUsers.set(trip.assistant.id, trip.assistant);
-            }
-        });
-        const users = Array.from(uniqueUsers.values()).sort((a, b) =>
-            a.name.localeCompare(b.name),
-        );
-        setDrivers(users);
-        setAssistants(users);
-    }, [trips]);
+        Promise.all([
+            fetch('/admin/api/transport/drivers', {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            }).then((r) => r.json()),
+            fetch('/admin/api/transport/assistants', {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            }).then((r) => r.json()),
+        ])
+            .then(([driversData, assistantsData]) => {
+                setDrivers(driversData.data ?? []);
+                setAssistants(assistantsData.data ?? []);
+            })
+            .catch(() => {});
+    }, []);
 
     async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
