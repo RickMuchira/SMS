@@ -17,6 +17,7 @@ class LocationController extends Controller
     {
         $validated = $request->validate([
             'student_id' => ['required', 'exists:users,id'],
+            'bus_id' => ['nullable', 'exists:buses,id'],
             'latitude' => ['required', 'numeric'],
             'longitude' => ['required', 'numeric'],
             'location_type' => ['required', 'in:pickup,dropoff,both'],
@@ -25,18 +26,21 @@ class LocationController extends Controller
 
         $user = $request->user();
 
-        // Create or update the location for this student and type.
+        $uniqueKey = [
+            'student_id' => $validated['student_id'],
+            'location_type' => $validated['location_type'],
+            'bus_id' => $validated['bus_id'] ?? null,
+        ];
+
         $location = Location::updateOrCreate(
-            [
-                'student_id' => $validated['student_id'],
-                'location_type' => $validated['location_type'],
-            ],
+            $uniqueKey,
             [
                 'name' => $validated['address'] ?? 'Student location',
                 'description' => null,
                 'latitude' => $validated['latitude'],
                 'longitude' => $validated['longitude'],
                 'address' => $validated['address'] ?? null,
+                'bus_id' => $validated['bus_id'] ?? null,
                 'order_sequence' => 0,
                 'created_by' => $user?->id,
                 'is_verified' => false,

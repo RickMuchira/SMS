@@ -20,6 +20,11 @@ export interface LoginResponse {
   user: { id: number; name: string; email: string };
   roles: string[];
   permissions: string[];
+  school_location?: {
+    latitude: number | null;
+    longitude: number | null;
+    address?: string | null;
+  } | null;
 }
 
 export async function login(

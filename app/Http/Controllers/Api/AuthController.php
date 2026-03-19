@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\SystemSetting;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -22,15 +23,22 @@ class AuthController extends Controller
         $identifier = trim($validated['identifier']);
         $password = trim($validated['password']);
 
-        // Always use student email as identifier
         /** @var \App\Models\User|null $user */
         $user = User::where('email', $identifier)->first();
 
+        if ($user === null) {
+            throw ValidationException::withMessages([
+                'identifier' => ['The provided credentials are incorrect.'],
+            ]);
+        }
+
+        // First, try the existing guardian / student login flow:
+        // email identifies the student user; password must match one of the guardian phone numbers.
         $phones = [];
-        if ($user !== null && $user->guardian_phone) {
+        if ($user->guardian_phone) {
             $phones[] = trim((string) $user->guardian_phone);
         }
-        if ($user !== null && is_array($user->extra_guardians)) {
+        if (is_array($user->extra_guardians)) {
             foreach ($user->extra_guardians as $guardian) {
                 if (! empty($guardian['phone'])) {
                     $phones[] = trim((string) $guardian['phone']);
@@ -40,17 +48,29 @@ class AuthController extends Controller
 
         $phones = array_values(array_unique($phones));
 
-        // Password must match one of the guardian phone numbers
-        if ($user === null || empty($phones) || ! in_array($password, $phones, true)) {
+        $authenticated = false;
+
+        if (! empty($phones) && in_array($password, $phones, true)) {
+            // Guardian / student login using phone number as password.
+            $authenticated = true;
+
+            // Ensure the stored password hash matches the phone the guardian used.
+            if (! Hash::check($password, $user->password)) {
+                $user->password = Hash::make($password);
+                $user->save();
+            }
+        } else {
+            // Fallback path: allow staff designated as driver or assistant to log in
+            // using their normal password, so they can use the transport mobile module.
+            if (Hash::check($password, $user->password) && $user->hasAnyRole(['driver', 'assistant'])) {
+                $authenticated = true;
+            }
+        }
+
+        if (! $authenticated) {
             throw ValidationException::withMessages([
                 'identifier' => ['The provided credentials are incorrect.'],
             ]);
-        }
-
-        // Ensure the stored password hash matches the phone the guardian used
-        if (! Hash::check($password, $user->password)) {
-            $user->password = Hash::make($password);
-            $user->save();
         }
 
         // Log the user in
@@ -63,6 +83,7 @@ class AuthController extends Controller
             'user' => $user->only(['id', 'name', 'email']),
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
+            'school_location' => $this->schoolLocation(),
         ], Response::HTTP_OK);
     }
 
@@ -87,6 +108,28 @@ class AuthController extends Controller
             'user' => $user->only(['id', 'name', 'email']),
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
+            'school_location' => $this->schoolLocation(),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * @return array{latitude: float|null, longitude: float|null, address: string|null}
+     */
+    private function schoolLocation(): array
+    {
+        return [
+            'latitude' => $this->toFloat(SystemSetting::get('school_latitude')),
+            'longitude' => $this->toFloat(SystemSetting::get('school_longitude')),
+            'address' => SystemSetting::get('school_address'),
+        ];
+    }
+
+    private function toFloat(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : null;
     }
 }

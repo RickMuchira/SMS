@@ -1,0 +1,2547 @@
+
+===== resources/js/pages/admin/students/index.tsx =====
+
+import { Head } from '@inertiajs/react';
+import { AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
+import { usePermissions } from '@/hooks/use-permissions';
+import { getCsrfToken } from '@/lib/csrf';
+import AppLayout from '@/layouts/app-layout';
+import type { BreadcrumbItem, User } from '@/types';
+
+type SchoolClass = {
+    id: number;
+    name: string;
+};
+
+type ExtraGuardian = {
+    name: string;
+    phone: string;
+};
+
+type ManagedUser = User & {
+    roles?: { name: string }[];
+    school_class?: SchoolClass;
+    extra_guardians?: ExtraGuardian[];
+};
+
+type PaginatedResponse = {
+    data: ManagedUser[];
+};
+
+const breadcrumbs: BreadcrumbItem[] = [
+    { title: 'Dashboard', href: '/admin/dashboard' },
+    { title: 'Students', href: '/admin/students' },
+];
+
+// Simple email generator (matches backend logic)
+function generateEmailFromName(name: string): string {
+    if (!name.trim()) return '';
+    const normalized = name
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '.');
+    return `${normalized}@student.local`;
+}
+
+export default function AdminStudentsIndex() {
+    const { hasPermission } = usePermissions();
+    const canManage = hasPermission('manage students');
+
+    const [list, setList] = useState<ManagedUser[]>([]);
+    const [classes, setClasses] = useState<SchoolClass[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    
+    // Create form state
+    const [name, setName] = useState('');
+    const [classId, setClassId] = useState('');
+    const [guardianName, setGuardianName] = useState('');
+    const [guardianPhone, setGuardianPhone] = useState('');
+    const [guardianRelationship] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [extraGuardians, setExtraGuardians] = useState<ExtraGuardian[]>([]);
+
+    // Auto-generate email from name
+    const generatedEmail = useMemo(() => generateEmailFromName(name), [name]);
+
+    // Edit form state
+    const [editing, setEditing] = useState<ManagedUser | null>(null);
+    const [editName, setEditName] = useState('');
+    const [editEmail, setEditEmail] = useState('');
+    const [editPassword, setEditPassword] = useState('');
+    const [editClassId, setEditClassId] = useState('');
+    const [editGuardianName, setEditGuardianName] = useState('');
+    const [editGuardianPhone, setEditGuardianPhone] = useState('');
+    const [editGuardianRelationship] = useState('');
+    const [editSubmitting, setEditSubmitting] = useState(false);
+    const [editError, setEditError] = useState<string | null>(null);
+    const [editExtraGuardians, setEditExtraGuardians] = useState<ExtraGuardian[]>([]);
+
+    // CSV import state
+    const [importing, setImporting] = useState(false);
+    const [importProgress, setImportProgress] = useState(0);
+    const [importResult, setImportResult] = useState<{
+        created: number;
+        updated: number;
+        errors: string[];
+    } | null>(null);
+    
+    // Full student list state (for bottom section)
+    const [allStudents, setAllStudents] = useState<ManagedUser[]>([]);
+    const [loadingAll, setLoadingAll] = useState(false);
+
+    // Duplicate detection state
+    const [duplicateGroups, setDuplicateGroups] = useState<ManagedUser[][]>([]);
+    const [loadingDuplicates, setLoadingDuplicates] = useState(false);
+    const [selectedDuplicateIds, setSelectedDuplicateIds] = useState<Set<number>>(new Set());
+    const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+
+    // Fetch classes (uses admin API so student-admins with "manage classes" can access)
+    useEffect(() => {
+        fetch('/admin/api/classes', {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    throw new Error('Failed to load classes');
+                }
+
+                return res.json();
+            })
+            .then((data: { data: SchoolClass[] }) => {
+                setClasses(data.data ?? []);
+            })
+            .catch(() => {
+                setClasses([]);
+            });
+    }, []);
+
+    const fetchList = useCallback(async () => {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        const response = await fetch(`/admin/api/students?${params}`, {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Failed to load students');
+        const payload = (await response.json()) as PaginatedResponse;
+        return payload.data ?? [];
+    }, [search]);
+
+    const fetchAllStudents = useCallback(async () => {
+        const response = await fetch('/admin/api/students', {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Failed to load students');
+        const payload = (await response.json()) as PaginatedResponse;
+        return payload.data ?? [];
+    }, []);
+
+    const fetchDuplicates = useCallback(async () => {
+        const response = await fetch('/admin/api/students/duplicates', {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Failed to load duplicates');
+        const payload = (await response.json()) as { data: ManagedUser[][] };
+        return payload.data ?? [];
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        fetchList()
+            .then((data) => {
+                if (!cancelled) setList(data);
+            })
+            .catch(() => {
+                if (!cancelled) setError('Unable to load students.');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchList]);
+
+    // Load all students initially for the bottom section
+    useEffect(() => {
+        let cancelled = false;
+        setLoadingAll(true);
+        fetchAllStudents()
+            .then((data) => {
+                if (!cancelled) setAllStudents(data);
+            })
+            .catch(() => {
+                if (!cancelled) console.error('Unable to load all students.');
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingAll(false);
+            });
+        return () => { cancelled = true; };
+    }, [fetchAllStudents]);
+
+    // Load duplicate groups
+    useEffect(() => {
+        let cancelled = false;
+        setLoadingDuplicates(true);
+        fetchDuplicates()
+            .then((data) => {
+                if (!cancelled) {
+                    setDuplicateGroups(data);
+                    setSelectedDuplicateIds(new Set());
+                }
+            })
+            .catch(() => {
+                if (!cancelled) setDuplicateGroups([]);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingDuplicates(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchDuplicates]);
+
+    // Combine search results and all students for display
+    const displayedStudents = useMemo(() => {
+        if (search && list.length > 0) {
+            // Show search results first, then remaining students
+            const searchIds = new Set(list.map(s => s.id));
+            const remaining = allStudents.filter(s => !searchIds.has(s.id));
+            return [...list, ...remaining];
+        }
+        return allStudents;
+    }, [search, list, allStudents]);
+
+    async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        setSubmitting(true);
+        setError(null);
+        try {
+            const csrf = getCsrfToken();
+
+            const body: Record<string, unknown> = {
+                name,
+            };
+            if (classId) body.class_id = parseInt(classId);
+            if (guardianName) body.guardian_name = guardianName;
+            if (guardianPhone) body.guardian_phone = guardianPhone;
+            // Relationship field no longer used in UI; keep null on backend.
+
+            const cleanedExtra = extraGuardians
+                .map((g) => ({
+                    name: g.name.trim(),
+                    phone: g.phone.trim(),
+                }))
+                .filter((g) => g.name || g.phone);
+            if (cleanedExtra.length > 0) {
+                body.extra_guardians = cleanedExtra;
+            }
+
+            const res = await fetch('/admin/api/students', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify(body),
+            });
+            if (!res.ok) {
+                const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(errBody?.message ?? 'Failed to create student');
+            }
+            const { user } = (await res.json()) as { user: ManagedUser };
+            setList((prev) => [...prev, user]);
+            setName('');
+            setClassId('');
+            setGuardianName('');
+            setGuardianPhone('');
+            setGuardianRelationship('');
+            setExtraGuardians([]);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    function openEdit(user: ManagedUser) {
+        setEditing(user);
+        setEditName(user.name);
+        setEditEmail(user.email);
+        setEditPassword('');
+        setEditClassId(user.class_id?.toString() ?? '');
+        setEditGuardianName(user.guardian_name ?? '');
+        setEditGuardianPhone(user.guardian_phone ?? '');
+        setEditGuardianRelationship('');
+        setEditExtraGuardians(user.extra_guardians ?? []);
+        setEditError(null);
+    }
+
+    async function handleEdit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!editing) return;
+        setEditSubmitting(true);
+        setEditError(null);
+        try {
+            const csrf = getCsrfToken();
+
+            const body: Record<string, unknown> = {
+                name: editName,
+                email: editEmail,
+            };
+            if (editPassword) body.password = editPassword;
+            if (editClassId) body.class_id = parseInt(editClassId);
+            body.guardian_name = editGuardianName || null;
+            body.guardian_phone = editGuardianPhone || null;
+            // Relationship field no longer used in UI; keep null on backend.
+
+            const cleanedExtra = editExtraGuardians
+                .map((g) => ({
+                    name: g.name.trim(),
+                    phone: g.phone.trim(),
+                }))
+                .filter((g) => g.name || g.phone);
+            if (cleanedExtra.length > 0) {
+                body.extra_guardians = cleanedExtra;
+            }
+
+            const res = await fetch(`/admin/api/students/${editing.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify(body),
+            });
+            if (!res.ok) {
+                const data = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(data?.message ?? 'Failed to update student');
+            }
+            const { user: updated } = (await res.json()) as { user: ManagedUser };
+            setList((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+            setEditing(null);
+        } catch (err) {
+            setEditError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+        } finally {
+            setEditSubmitting(false);
+        }
+    }
+
+    async function handleDelete(user: ManagedUser) {
+        if (!canManage || !window.confirm(`Delete student "${user.name}"? This will remove their account.`)) return;
+        try {
+            const csrf = getCsrfToken();
+            const res = await fetch(`/admin/api/students/${user.id}`, {
+                method: 'DELETE',
+                headers: {
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+            });
+            if (res.ok) {
+                setList((prev) => prev.filter((u) => u.id !== user.id));
+                setAllStudents((prev) => prev.filter((u) => u.id !== user.id));
+                fetchDuplicates().then(setDuplicateGroups);
+            }
+        } catch {
+            setError('Failed to delete student.');
+        }
+    }
+
+    function toggleDuplicateSelection(id: number) {
+        setSelectedDuplicateIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
+    function selectAllDuplicates(keepFirst: boolean) {
+        const ids = new Set<number>();
+        duplicateGroups.forEach((group) => {
+            const sorted = [...group].sort((a, b) => (a.email < b.email ? -1 : 1));
+            (keepFirst ? sorted.slice(1) : sorted).forEach((u) => ids.add(u.id));
+        });
+        setSelectedDuplicateIds(ids);
+    }
+
+    async function handleBulkDeleteDuplicates() {
+        if (!canManage || selectedDuplicateIds.size === 0) return;
+        if (!window.confirm(`Delete ${selectedDuplicateIds.size} duplicate student(s)? This cannot be undone.`)) return;
+        setDeletingDuplicates(true);
+        setError(null);
+        try {
+            const csrf = getCsrfToken();
+            const res = await fetch('/admin/api/students/bulk', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ ids: Array.from(selectedDuplicateIds) }),
+            });
+            if (!res.ok) throw new Error('Failed to delete');
+            await res.json();
+            const idsToDelete = Array.from(selectedDuplicateIds);
+            setSelectedDuplicateIds(new Set());
+            setList((prev) => prev.filter((u) => !idsToDelete.includes(u.id)));
+            setAllStudents((prev) => prev.filter((u) => !idsToDelete.includes(u.id)));
+            const groups = await fetchDuplicates();
+            setDuplicateGroups(groups);
+        } catch {
+            setError('Failed to delete duplicate students.');
+        } finally {
+            setDeletingDuplicates(false);
+        }
+    }
+
+    async function handleImport(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        const formData = new FormData(e.currentTarget);
+        setImporting(true);
+        setImportProgress(0);
+        setImportResult(null);
+        setError(null);
+
+        try {
+            const csrf = getCsrfToken();
+            
+            // Simulate progress animation
+            const progressInterval = setInterval(() => {
+                setImportProgress(prev => {
+                    if (prev >= 90) return prev;
+                    return prev + 10;
+                });
+            }, 200);
+
+            const res = await fetch('/admin/api/students/import', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                },
+                credentials: 'same-origin',
+                body: formData,
+            });
+            
+            clearInterval(progressInterval);
+            setImportProgress(100);
+            
+            if (!res.ok) {
+                const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(errBody?.message ?? 'Failed to import CSV');
+            }
+            const result = (await res.json()) as {
+                created: number;
+                updated: number;
+                errors: string[];
+            };
+            setImportResult(result);
+            // Refresh lists and duplicates
+            fetchList().then(setList);
+            fetchAllStudents().then(setAllStudents);
+            fetchDuplicates().then(setDuplicateGroups);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+        } finally {
+            setImporting(false);
+            setTimeout(() => setImportProgress(0), 1000);
+        }
+    }
+
+    return (
+        <AppLayout breadcrumbs={breadcrumbs}>
+            <Head title="Student management" />
+
+            <div className="space-y-8">
+                {canManage && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Create student account</CardTitle>
+                            <p className="text-sm text-muted-foreground">
+                                Email will be auto-generated from name. Password defaults to guardian phone if provided.
+                            </p>
+                        </CardHeader>
+                        <CardContent>
+                            <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Student full name *</Label>
+                                    <Input
+                                        id="name"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="e.g. Mary Wanjiru Muchira"
+                                        required
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="class">Class</Label>
+                                    <select
+                                        id="class"
+                                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                        value={classId}
+                                        onChange={(e) => setClassId(e.target.value)}
+                                    >
+                                        <option value="">No class</option>
+                                        {classes.map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="guardian-name">Guardian name</Label>
+                                    <Input
+                                        id="guardian-name"
+                                        value={guardianName}
+                                        onChange={(e) => setGuardianName(e.target.value)}
+                                        placeholder="e.g. John Muchira"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="guardian-phone">Guardian phone (login identifier) *</Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="guardian-phone"
+                                            type={showPassword ? 'text' : 'password'}
+                                            value={guardianPhone}
+                                            onChange={(e) => setGuardianPhone(e.target.value)}
+                                            placeholder="e.g. 0712345678"
+                                            required
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            title={showPassword ? 'Hide' : 'Show'}
+                                        >
+                                            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        Enter the local phone number starting with 0 (for example 0712345678).
+                                        This exact value will be stored and used as the parent&apos;s login identifier
+                                        and as the initial password.
+                                    </p>
+                                </div>
+                            {/* Relationship removed – only name & phone are captured for guardians. */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="generated-email">Email (auto-generated)</Label>
+                                    <Input
+                                        id="generated-email"
+                                        value={generatedEmail}
+                                        readOnly
+                                        disabled
+                                        className="bg-muted"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Automatically generated from student name
+                                    </p>
+                                </div>
+                                <div className="md:col-span-2 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <Label>Additional guardians (optional)</Label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() =>
+                                                setExtraGuardians((prev) => [
+                                                    ...prev,
+                                                    { name: '', phone: '', relationship: '' },
+                                                ])
+                                            }
+                                        >
+                                            Add guardian
+                                        </Button>
+                                    </div>
+                                    {extraGuardians.length > 0 && (
+                                        <div className="space-y-3 border rounded-md p-3">
+                                            {extraGuardians.map((g, index) => (
+                                                <div
+                                                    key={index}
+                                                    className="grid gap-2 md:grid-cols-[2fr,2fr,auto]"
+                                                >
+                                                    <Input
+                                                        placeholder="Guardian name"
+                                                        value={g.name}
+                                                        onChange={(e) =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.map((item, i) =>
+                                                                    i === index
+                                                                        ? {
+                                                                              ...item,
+                                                                              name: e.target.value,
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            )
+                                                        }
+                                                    />
+                                                    <Input
+                                                        placeholder="Phone e.g. 0712345678"
+                                                        value={g.phone}
+                                                        onChange={(e) =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.map((item, i) =>
+                                                                    i === index
+                                                                        ? {
+                                                                              ...item,
+                                                                              phone: e.target.value,
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            )
+                                                        }
+                                                    />
+                                                    {/* Relationship field removed – only name & phone are stored. */}
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-red-600 hover:text-red-700"
+                                                        onClick={() =>
+                                                            setExtraGuardians((prev) =>
+                                                                prev.filter((_, i) => i !== index),
+                                                            )
+                                                        }
+                                                    >
+                                                        Remove
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="md:col-span-2 flex items-center gap-4">
+                                    <Button type="submit" disabled={submitting}>
+                                        {submitting ? 'Creating...' : 'Create student'}
+                                    </Button>
+                                    {error && <p className="text-sm text-red-500">{error}</p>}
+                                </div>
+                            </form>
+                        </CardContent>
+                    </Card>
+                )}
+
+                {canManage && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Import students from CSV</CardTitle>
+                            <p className="text-sm text-muted-foreground">
+                                Upload a CSV or Excel (.xlsx) file. First row must include: full_name (required), then any
+                                of class_name and up to three pairs of guardian_name / guardian_phone (for example:
+                                Guardian Name, Phone Number, Guardian Name, Phone Number, ...).
+                            </p>
+                        </CardHeader>
+                        <CardContent>
+                            <form onSubmit={handleImport} className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="csv-file">CSV file</Label>
+                                    <Input
+                                        id="csv-file"
+                                        name="file"
+                                        type="file"
+                                        accept=".csv,.xlsx,.xls"
+                                        required
+                                    />
+                                </div>
+                                {importing && importProgress > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between text-sm">
+                                            <span className="text-muted-foreground">Importing...</span>
+                                            <span className="font-medium">{importProgress}%</span>
+                                        </div>
+                                        <Progress value={importProgress} />
+                                    </div>
+                                )}
+                                <Button type="submit" disabled={importing}>
+                                    {importing ? 'Importing...' : 'Upload & import'}
+                                </Button>
+                            </form>
+                            {importResult && (
+                                <div className="mt-4 p-4 border rounded-md space-y-2">
+                                    <p className="font-medium">Import completed</p>
+                                    <p className="text-sm text-green-600">{importResult.created} created, {importResult.updated} updated</p>
+                                    {importResult.errors.length > 0 && (
+                                        <div className="text-sm text-red-600">
+                                            <p className="font-medium">{importResult.errors.length} errors:</p>
+                                            <ul className="list-disc list-inside max-h-40 overflow-y-auto">
+                                                {importResult.errors.map((err, i) => (
+                                                    <li key={i}>{err}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
+
+                {(canManage || duplicateGroups.length > 0) && (
+                    <Card className="border-amber-200 dark:border-amber-800">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <AlertTriangle className="size-5 text-amber-600 dark:text-amber-500" />
+                                Potential duplicates
+                            </CardTitle>
+                            <p className="text-sm text-muted-foreground">
+                                These students share the same name and may be duplicates. Select the ones to delete and click
+                                &quot;Delete selected&quot;. Or use &quot;Select all duplicates (keep first)&quot; to mark all
+                                but the first in each group for deletion.
+                            </p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {loadingDuplicates ? (
+                                <p className="text-sm text-muted-foreground">Checking for duplicates...</p>
+                            ) : duplicateGroups.length === 0 ? (
+                                <p className="text-sm text-green-600 dark:text-green-500">No duplicates found.</p>
+                            ) : (
+                                <>
+                                    {canManage && (
+                                        <div className="flex flex-wrap gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => selectAllDuplicates(true)}
+                                            >
+                                                Select all duplicates (keep first per group)
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setSelectedDuplicateIds(new Set())}
+                                            >
+                                                Clear selection
+                                            </Button>
+                                            {selectedDuplicateIds.size > 0 && (
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    disabled={deletingDuplicates}
+                                                    onClick={handleBulkDeleteDuplicates}
+                                                >
+                                                    {deletingDuplicates ? 'Deleting...' : `Delete selected (${selectedDuplicateIds.size})`}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    )}
+                                    <div className="space-y-4">
+                                        {duplicateGroups.map((group, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="rounded-md border border-amber-200 dark:border-amber-800 p-4 space-y-2"
+                                            >
+                                                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                                    {group.length} duplicate{group.length > 1 ? 's' : ''}: {group[0]?.name}
+                                                </p>
+                                                <div className="space-y-2">
+                                                    {group.map((u) => (
+                                                        <div
+                                                            key={u.id}
+                                                            className="flex items-center gap-4 p-2 rounded bg-muted/50 text-sm"
+                                                        >
+                                                            {canManage && (
+                                                                <Checkbox
+                                                                    checked={selectedDuplicateIds.has(u.id)}
+                                                                    onCheckedChange={() => toggleDuplicateSelection(u.id)}
+                                                                />
+                                                            )}
+                                                            <span className="font-medium">{u.name}</span>
+                                                            <span className="text-muted-foreground">{u.email}</span>
+                                                            <span className="text-muted-foreground">
+                                                                {u.school_class?.name ?? '—'}
+                                                            </span>
+                                                            {canManage && (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="text-red-600 hover:text-red-700 ml-auto"
+                                                                    onClick={() => handleDelete(u)}
+                                                                >
+                                                                    Delete
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Students</CardTitle>
+                        <p className="text-sm text-muted-foreground">
+                            {search && list.length > 0
+                                ? `Showing ${list.length} search result${list.length !== 1 ? 's' : ''} (highlighted) • ${allStudents.length} total students` 
+                                : `All students (${allStudents.length} total)`}
+                        </p>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="Search by name, email or phone..."
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                className="max-w-sm"
+                            />
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => fetchList().then(setList)}
+                            >
+                                Search
+                            </Button>
+                            {search && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => setSearch('')}
+                                >
+                                    Clear
+                                </Button>
+                            )}
+                        </div>
+                        {loading || loadingAll ? (
+                            <p className="text-sm text-muted-foreground">Loading...</p>
+                        ) : displayedStudents.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No students found.</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b text-left">
+                                            <th className="py-2 pr-4">Name</th>
+                                            <th className="py-2 pr-4">Email</th>
+                                            <th className="py-2 pr-4">Class</th>
+                                            <th className="py-2 pr-4">Guardian</th>
+                                            {canManage && <th className="py-2 pr-4">Actions</th>}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {displayedStudents.map((user, index) => {
+                                            const isSearchResult = search && index < list.length;
+                                            return (
+                                                <tr 
+                                                    key={user.id} 
+                                                    className={`border-b last:border-0 ${isSearchResult ? 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' : ''}`}
+                                                >
+                                                    <td className="py-2 pr-4 font-medium">{user.name}</td>
+                                                    <td className="py-2 pr-4 text-sm text-muted-foreground">{user.email}</td>
+                                                    <td className="py-2 pr-4">{user.school_class?.name ?? '—'}</td>
+                                                    <td className="py-2 pr-4 text-sm">
+                                                        <div className="space-y-1">
+                                                            <div>
+                                                                {user.guardian_name && user.guardian_phone
+                                                                    ? `${user.guardian_name} (${user.guardian_phone})`
+                                                                    : user.guardian_phone || '—'}
+                                                            </div>
+                                                            {user.extra_guardians && user.extra_guardians.length > 0 && (
+                                                                <div className="text-xs text-muted-foreground space-y-0.5">
+                                                                    {user.extra_guardians.map((g, i) => (
+                                                                        <div key={i}>
+                                                                            {g.name || 'Guardian'}{' '}
+                                                                            {g.phone ? `(${g.phone})` : ''}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    {canManage && (
+                                                        <td className="py-2 pr-4 flex gap-2">
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={() => openEdit(user)}
+                                                            >
+                                                                Edit
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="text-red-600 hover:text-red-700"
+                                                                onClick={() => handleDelete(user)}
+                                                            >
+                                                                Delete
+                                                            </Button>
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Edit student</DialogTitle>
+                    </DialogHeader>
+                    <form onSubmit={handleEdit} className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-name">Student name</Label>
+                                <Input
+                                    id="edit-name"
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-class">Class</Label>
+                                <select
+                                    id="edit-class"
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    value={editClassId}
+                                    onChange={(e) => setEditClassId(e.target.value)}
+                                >
+                                    <option value="">No class</option>
+                                    {classes.map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                            {c.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-guardian-name">Guardian name</Label>
+                                <Input
+                                    id="edit-guardian-name"
+                                    value={editGuardianName}
+                                    onChange={(e) => setEditGuardianName(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-guardian-phone">Guardian phone</Label>
+                                <Input
+                                    id="edit-guardian-phone"
+                                    value={editGuardianPhone}
+                                    onChange={(e) => setEditGuardianPhone(e.target.value)}
+                                />
+                            </div>
+                            {/* Relationship removed – only name & phone are editable. */}
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-email">Email</Label>
+                                <Input
+                                    id="edit-email"
+                                    type="email"
+                                    value={editEmail}
+                                    onChange={(e) => setEditEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2 md:col-span-2">
+                                <Label htmlFor="edit-password">New password (leave blank to keep)</Label>
+                                <Input
+                                    id="edit-password"
+                                    type="password"
+                                    value={editPassword}
+                                    onChange={(e) => setEditPassword(e.target.value)}
+                                />
+                            </div>
+                            <div className="md:col-span-2 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <Label>Additional guardians (optional)</Label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                            setEditExtraGuardians((prev) => [
+                                                ...prev,
+                                                { name: '', phone: '', relationship: '' },
+                                            ])
+                                        }
+                                    >
+                                        Add guardian
+                                    </Button>
+                                </div>
+                                {editExtraGuardians.length > 0 && (
+                                    <div className="space-y-3 border rounded-md p-3">
+                                        {editExtraGuardians.map((g, index) => (
+                                            <div
+                                                key={index}
+                                                className="grid gap-2 md:grid-cols-[2fr,2fr,auto]"
+                                            >
+                                                <Input
+                                                    placeholder="Guardian name"
+                                                    value={g.name}
+                                                    onChange={(e) =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.map((item, i) =>
+                                                                i === index
+                                                                    ? { ...item, name: e.target.value }
+                                                                    : item,
+                                                            ),
+                                                        )
+                                                    }
+                                                />
+                                                <Input
+                                                    placeholder="Phone e.g. 0712345678"
+                                                    value={g.phone}
+                                                    onChange={(e) =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.map((item, i) =>
+                                                                i === index
+                                                                    ? { ...item, phone: e.target.value }
+                                                                    : item,
+                                                            ),
+                                                        )
+                                                    }
+                                                />
+                                                {/* Relationship field removed – only name & phone are stored. */}
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-red-600 hover:text-red-700"
+                                                    onClick={() =>
+                                                        setEditExtraGuardians((prev) =>
+                                                            prev.filter((_, i) => i !== index),
+                                                        )
+                                                    }
+                                                >
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        {editError && <p className="text-sm text-red-500">{editError}</p>}
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setEditing(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={editSubmitting}>
+                                {editSubmitting ? 'Saving...' : 'Save'}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+        </AppLayout>
+    );
+}
+
+===== app/Http/Controllers/Admin/StudentController.php =====
+
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Response;
+use Inertia\Inertia;
+use Inertia\Response as InertiaResponse;
+
+class StudentController extends Controller
+{
+    public function index(): InertiaResponse|Response
+    {
+        return Inertia::render('admin/students/index');
+    }
+}
+
+===== app/Http/Controllers/Api/StudentController.php =====
+
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\SchoolClass;
+use App\Models\User;
+use App\Services\EmailGeneratorService;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Maatwebsite\Excel\Facades\Excel;
+use Spatie\Permission\Models\Role;
+
+class StudentController extends Controller
+{
+    /**
+     * Get groups of duplicate students (same base email from name).
+     */
+    public function duplicates(): Response
+    {
+        $students = User::role('student')
+            ->with(['schoolClass'])
+            ->orderBy('name')
+            ->get();
+
+        $groups = [];
+        foreach ($students as $student) {
+            $baseEmail = EmailGeneratorService::getBaseEmailFromName($student->name);
+            if (! isset($groups[$baseEmail])) {
+                $groups[$baseEmail] = [];
+            }
+            $groups[$baseEmail][] = $student;
+        }
+
+        $duplicates = array_values(array_filter($groups, fn ($group) => count($group) > 1));
+
+        return response(['data' => $duplicates], Response::HTTP_OK);
+    }
+
+    /**
+     * Bulk delete students by IDs.
+     */
+    public function bulkDestroy(Request $request): Response
+    {
+        $validated = $request->validate([
+            'ids' => ['required', 'array'],
+            'ids.*' => ['integer', 'exists:users,id'],
+        ]);
+
+        $deleted = User::role('student')
+            ->whereIn('id', $validated['ids'])
+            ->delete();
+
+        return response(['deleted' => $deleted], Response::HTTP_OK);
+    }
+
+    /**
+     * Display a listing of students (users with student role).
+     */
+    public function index(Request $request): Response
+    {
+        $students = User::query()
+            ->with(['roles', 'schoolClass'])
+            ->where(function ($query) {
+                $query->whereHas('roles', function ($q) {
+                    $q->where('name', 'student');
+                })->orWhereNotNull('class_id');
+            })
+            ->orderBy('name')
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = $request->string('search');
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('guardian_phone', 'like', "%{$search}%");
+                });
+            })
+            ->when($request->filled('class_id'), function ($query) use ($request) {
+                $query->where('class_id', $request->integer('class_id'));
+            })
+            ->paginate($request->integer('per_page', 20));
+
+        // Ensure all text fields are valid UTF-8 so JSON encoding never fails.
+        $students->getCollection()->transform(function (User $user) {
+            $user->name = self::cleanUtf8($user->name);
+            $user->email = self::cleanUtf8($user->email);
+            $user->guardian_name = self::cleanUtf8($user->guardian_name);
+            $user->guardian_phone = self::cleanUtf8($user->guardian_phone);
+
+            if (is_array($user->extra_guardians)) {
+                $user->extra_guardians = collect($user->extra_guardians)
+                    ->map(function (array $g) {
+                        return [
+                            'name' => self::cleanUtf8($g['name'] ?? null),
+                            'phone' => self::cleanUtf8($g['phone'] ?? null),
+                        ];
+                    })
+                    ->all();
+            }
+
+            if ($user->relationLoaded('schoolClass') && $user->schoolClass !== null) {
+                $user->schoolClass->name = self::cleanUtf8($user->schoolClass->name);
+            }
+
+            return $user;
+        });
+
+        return response($students, Response::HTTP_OK);
+    }
+
+    /**
+     * Store a newly created student account.
+     */
+    public function store(Request $request): Response
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['nullable', 'string', 'min:8'],
+            'class_id' => ['nullable', 'integer', 'exists:school_classes,id'],
+            'guardian_name' => ['nullable', 'string', 'max:255'],
+            'guardian_phone' => ['nullable', 'string', 'max:20'],
+            'extra_guardians' => ['nullable', 'array'],
+            'extra_guardians.*.name' => ['required_with:extra_guardians.*.phone', 'string', 'max:255'],
+            'extra_guardians.*.phone' => ['nullable', 'string', 'max:20'],
+        ]);
+
+        // Auto-generate email if not provided
+        if (empty($validated['email'])) {
+            $validated['email'] = EmailGeneratorService::generateFromName($validated['name']);
+        }
+
+        // Set password: guardian phone if provided, otherwise require it
+        if (empty($validated['password'])) {
+            if (! empty($validated['guardian_phone'])) {
+                $validated['password'] = $validated['guardian_phone'];
+            } else {
+                return response([
+                    'message' => 'Either password or guardian_phone must be provided.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        $user = User::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'class_id' => $validated['class_id'] ?? null,
+            'guardian_name' => $validated['guardian_name'] ?? null,
+            'guardian_phone' => $validated['guardian_phone'] ?? null,
+            'extra_guardians' => $validated['extra_guardians'] ?? null,
+        ]);
+
+        $studentRole = Role::where('name', 'student')->first();
+        if ($studentRole !== null) {
+            $user->assignRole($studentRole);
+        }
+
+        return response([
+            'user' => $user->fresh(['roles', 'schoolClass']),
+        ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Display the specified student.
+     */
+    public function show(string $id): Response
+    {
+        $user = User::role('student')->with(['roles', 'schoolClass'])->findOrFail($id);
+
+        return response([
+            'user' => $user,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Update the specified student.
+     */
+    public function update(Request $request, string $id): Response
+    {
+        $user = User::role('student')->findOrFail($id);
+
+        $validated = $request->validate([
+            'name' => ['sometimes', 'string', 'max:255'],
+            'email' => ['sometimes', 'string', 'email', 'max:255', 'unique:users,email,'.$user->id],
+            'password' => ['sometimes', 'string', 'min:8'],
+            'class_id' => ['nullable', 'integer', 'exists:school_classes,id'],
+            'guardian_name' => ['nullable', 'string', 'max:255'],
+            'guardian_phone' => ['nullable', 'string', 'max:20'],
+            'extra_guardians' => ['nullable', 'array'],
+            'extra_guardians.*.name' => ['required_with:extra_guardians.*.phone', 'string', 'max:255'],
+            'extra_guardians.*.phone' => ['nullable', 'string', 'max:20'],
+        ]);
+
+        if (array_key_exists('name', $validated)) {
+            $user->name = $validated['name'];
+        }
+        if (array_key_exists('email', $validated)) {
+            $user->email = $validated['email'];
+        }
+        if (array_key_exists('password', $validated)) {
+            $user->password = Hash::make($validated['password']);
+        }
+        if (array_key_exists('class_id', $validated)) {
+            $user->class_id = $validated['class_id'];
+        }
+        if (array_key_exists('guardian_name', $validated)) {
+            $user->guardian_name = $validated['guardian_name'];
+        }
+        if (array_key_exists('guardian_phone', $validated)) {
+            $user->guardian_phone = $validated['guardian_phone'];
+        }
+        if (array_key_exists('extra_guardians', $validated)) {
+            $user->extra_guardians = $validated['extra_guardians'];
+        }
+
+        $user->save();
+
+        return response([
+            'user' => $user->fresh(['roles', 'schoolClass']),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Remove the specified student account.
+     */
+    public function destroy(string $id): Response
+    {
+        $user = User::role('student')->findOrFail($id);
+        $user->delete();
+
+        return response()->noContent();
+    }
+
+    /**
+     * Normalize a CSV/Excel header to canonical key (handles "Full Name" -> full_name, etc.).
+     */
+    private static function normalizeHeaderKey(string $value): string
+    {
+        // Strip UTF-8 BOM and other non-printable/control characters that can
+        // appear at the start of CSV / Excel-exported headers, then normalize.
+        $value = preg_replace('/^\xEF\xBB\xBF/u', '', $value) ?? $value;
+        $value = preg_replace('/[[:^print:]]/u', '', $value) ?? $value;
+
+        return str_replace(' ', '_', strtolower(trim($value)));
+    }
+
+    /**
+     * Clean a string to ensure it is valid UTF-8 and free of problematic control characters.
+     */
+    private static function cleanUtf8(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $converted = @mb_convert_encoding($value, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+        if ($converted === false) {
+            $converted = $value;
+        }
+
+        // Remove all control characters except newlines and tabs.
+        $converted = preg_replace('/[^\P{C}\n\t]/u', '', $converted) ?? $converted;
+
+        return $converted;
+    }
+
+    /**
+     * Map normalized header to canonical column name for import.
+     *
+     * @return array<string, string> original_header => canonical_key
+     */
+    private static function mapHeadersToCanonical(array $headers): array
+    {
+        $aliases = [
+            'full_name' => ['full_name', 'fullname', 'student_name', 'studentname', 'name'],
+            'class_name' => ['class_name', 'classname', 'class'],
+            'guardian_name' => [
+                'guardian_name',
+                'guardianname',
+                'guardian_1_name',
+                'guardian_2_name',
+                'guardian_3_name',
+                'guardian1_name',
+                'guardian2_name',
+                'guardian3_name',
+                'guardian_name_1',
+                'guardian_name_2',
+                'guardian_name_3',
+            ],
+            'guardian_phone' => [
+                'guardian_phone',
+                'guardianphone',
+                'phone',
+                'phone_number',
+                'phone_number_1',
+                'phone_number_2',
+                'phone_number_3',
+                'phone_numl', // Handle typo: phone_numl -> phone_number
+                'phone_num', // Handle shortened: phone_num -> phone_number
+            ],
+            'guardian_relationship' => ['guardian_relationship', 'guardianrelationship', 'relationship'],
+        ];
+        $headerToCanonical = [];
+        foreach ($headers as $h) {
+            $norm = self::normalizeHeaderKey((string) $h);
+            $matched = false;
+            foreach ($aliases as $canonical => $variants) {
+                if (in_array($norm, $variants, true)) {
+                    $headerToCanonical[$norm] = $canonical;
+                    $matched = true;
+                    break;
+                }
+            }
+            // Fuzzy match for phone columns (handle common typos)
+            if (! $matched && preg_match('/^phone.*num/i', $norm)) {
+                $headerToCanonical[$norm] = 'guardian_phone';
+                $matched = true;
+            }
+            if (! $matched) {
+                $headerToCanonical[$norm] = $norm;
+            }
+        }
+
+        return $headerToCanonical;
+    }
+
+    /**
+     * Import students from CSV or Excel.
+     *
+     * Expected columns:
+     * - full_name (or Full Name, Name, Student Name, etc.) - required
+     * - class_name / Class - optional
+     * - One or more guardian_name / Guardian Name columns (up to 3), each followed by a guardian_phone / Phone Number column.
+     *
+     * The first guardian in the row becomes the primary guardian (guardian_name / guardian_phone on the user),
+     * and any additional guardians (up to 2 more) are stored in the extra_guardians JSON column.
+     */
+    public function import(Request $request): Response
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'max:2048'],
+        ]);
+
+        $file = $request->file('file');
+        if (! $file) {
+            return response(['message' => 'No file uploaded.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        $rows = [];
+        if (in_array($extension, ['csv', 'txt'], true)) {
+            $path = $file->getRealPath();
+            $handle = fopen($path, 'r');
+            if (! $handle) {
+                return response(['message' => 'Could not open file.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $rawHeader = fgetcsv($handle, 0, ',', '"', '\\');
+            if (! $rawHeader) {
+                fclose($handle);
+
+                return response(['message' => 'CSV file is empty or invalid.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $header = array_map(fn ($h) => self::normalizeHeaderKey((string) $h), $rawHeader);
+            $headerToCanonical = self::mapHeadersToCanonical($rawHeader);
+            $hasFullName = in_array('full_name', array_values($headerToCanonical), true);
+            if (! $hasFullName && isset($header[0]) && $header[0] !== '') {
+                // Fallback: assume first column is full_name to handle slightly malformed exports.
+                $headerToCanonical[$header[0]] = 'full_name';
+                $hasFullName = true;
+            }
+            if (! $hasFullName) {
+                fclose($handle);
+
+                return response([
+                    'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $rows[] = $header;
+            while (($row = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
+                $rows[] = $row;
+            }
+
+            fclose($handle);
+        } else {
+            // Excel (xlsx/xls) - try Excel first, fallback to CSV if it fails
+            $excelFailed = false;
+            $rawHeader = null;
+            $header = null;
+            $headerToCanonical = null;
+
+            try {
+                $sheets = Excel::toArray(null, $file);
+                $sheet = $sheets[0] ?? [];
+                if (empty($sheet)) {
+                    $excelFailed = true;
+                } else {
+                    $rows = $sheet;
+                    $rawHeader = array_shift($rows);
+                    if (! $rawHeader) {
+                        $excelFailed = true;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::info('Student import Excel read failed, attempting CSV fallback', [
+                    'error' => $e->getMessage(),
+                    'extension' => $extension,
+                ]);
+                $excelFailed = true;
+            }
+
+            // If Excel failed, try reading as CSV (file might be CSV with .xlsx extension)
+            if ($excelFailed) {
+                $path = $file->getRealPath();
+                $handle = @fopen($path, 'r');
+                if ($handle) {
+                    $rawHeader = fgetcsv($handle, 0, ',', '"', '\\');
+                    if ($rawHeader && count($rawHeader) > 0) {
+                        // Successfully read as CSV
+                        $header = array_map(fn ($h) => self::normalizeHeaderKey((string) $h), $rawHeader);
+                        $headerToCanonical = self::mapHeadersToCanonical($rawHeader);
+                        $hasFullName = in_array('full_name', array_values($headerToCanonical), true);
+                        if (! $hasFullName && isset($header[0]) && $header[0] !== '') {
+                            // Fallback: assume first column is full_name to handle slightly malformed exports.
+                            $headerToCanonical[$header[0]] = 'full_name';
+                            $hasFullName = true;
+                        }
+                        if ($hasFullName) {
+                            $rows = [];
+                            $rows[] = $header;
+                            rewind($handle);
+                            fgetcsv($handle, 0, ',', '"', '\\'); // Skip header
+                            while (($row = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
+                                $rows[] = $row;
+                            }
+                            fclose($handle);
+                        } else {
+                            fclose($handle);
+
+                            return response([
+                                'message' => 'File appears to be CSV format but missing required column. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone.',
+                            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                        }
+                    } else {
+                        fclose($handle);
+                    }
+                }
+
+                if (! $rawHeader) {
+                    return response([
+                        'message' => 'Unable to read file as Excel (.xlsx/.xls) or CSV. Please ensure the file is a valid Excel workbook or export it as CSV (Comma delimited) and try again.',
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+            } else {
+                // Excel read succeeded
+                $header = array_map(fn ($h) => self::normalizeHeaderKey((string) $h), $rawHeader);
+                $headerToCanonical = self::mapHeadersToCanonical($rawHeader);
+                $hasFullName = in_array('full_name', array_values($headerToCanonical), true);
+                if (! $hasFullName && isset($header[0]) && $header[0] !== '') {
+                    // Fallback: assume first column is full_name to handle slightly malformed exports.
+                    $headerToCanonical[$header[0]] = 'full_name';
+                    $hasFullName = true;
+                }
+                if (! $hasFullName) {
+                    return response([
+                        'message' => 'Missing required column for student name. Use full_name, Full Name, Name, or Student Name. Other columns: class_name, guardian_name, guardian_phone.',
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+
+                array_unshift($rows, $header);
+            }
+        }
+
+        $results = [
+            'created' => 0,
+            'updated' => 0,
+            'errors' => [],
+        ];
+
+        // Preload all classes once (avoids N queries per row)
+        $classIdsByName = SchoolClass::pluck('id', 'name')->all();
+
+        $studentRole = Role::where('name', 'student')->first();
+
+        // Determine important column indices for structured parsing.
+        $fullNameIndex = null;
+        $classNameIndex = null;
+        $guardianColumns = []; // each: ['name' => ?int, 'phone' => ?int]
+
+        foreach ($header as $index => $normKey) {
+            $canonical = $headerToCanonical[$normKey] ?? $normKey;
+            if ($canonical === 'full_name' && $fullNameIndex === null) {
+                $fullNameIndex = $index;
+            } elseif ($canonical === 'class_name' && $classNameIndex === null) {
+                $classNameIndex = $index;
+            } elseif ($canonical === 'guardian_name') {
+                $guardianColumns[] = ['name' => $index, 'phone' => null];
+            } elseif ($canonical === 'guardian_phone') {
+                $lastIndex = count($guardianColumns) - 1;
+                if ($lastIndex >= 0 && $guardianColumns[$lastIndex]['phone'] === null) {
+                    $guardianColumns[$lastIndex]['phone'] = $index;
+                } else {
+                    $guardianColumns[] = ['name' => null, 'phone' => $index];
+                }
+            }
+        }
+
+        // First pass: parse rows and collect emails for bulk user lookup
+        $dataRows = [];
+        $lineNumber = 0;
+        foreach ($rows as $row) {
+            $lineNumber++;
+            if ($lineNumber === 1) {
+                continue;
+            }
+
+            $padded = array_pad(
+                array_map(
+                    fn ($v) => is_scalar($v)
+                        ? trim((string) self::cleanUtf8((string) $v))
+                        : '',
+                    $row
+                ),
+                count($header),
+                ''
+            );
+
+            $fullName = $fullNameIndex !== null ? trim($padded[$fullNameIndex] ?? '') : '';
+            if ($fullName === '') {
+                $results['errors'][] = "Line {$lineNumber}: Missing full_name";
+
+                continue;
+            }
+
+            $className = $classNameIndex !== null ? trim($padded[$classNameIndex] ?? '') : '';
+
+            // Collect up to 3 guardians from repeated guardian_name/guardian_phone columns.
+            $guardians = [];
+            foreach ($guardianColumns as $guardianColumn) {
+                $name = $guardianColumn['name'] !== null ? trim($padded[$guardianColumn['name']] ?? '') : '';
+                $phone = $guardianColumn['phone'] !== null ? trim($padded[$guardianColumn['phone']] ?? '') : '';
+                if ($name === '' && $phone === '') {
+                    continue;
+                }
+
+                $guardians[] = [
+                    'name' => $name,
+                    'phone' => $phone,
+                ];
+
+                if (count($guardians) >= 3) {
+                    break;
+                }
+            }
+
+            $primaryGuardian = $guardians[0] ?? ['name' => '', 'phone' => ''];
+            $extraGuardians = array_slice($guardians, 1);
+
+            $generatedEmail = EmailGeneratorService::generateFromName($fullName);
+            $baseEmail = EmailGeneratorService::getBaseEmailFromName($fullName);
+
+            $dataRows[] = [
+                'line' => $lineNumber,
+                'full_name' => $fullName,
+                'class_name' => $className,
+                'guardian_name' => $primaryGuardian['name'],
+                'guardian_phone' => $primaryGuardian['phone'],
+                'extra_guardians' => $extraGuardians,
+                'email' => $generatedEmail,
+                'base_email' => $baseEmail,
+            ];
+        }
+
+        $allEmails = array_values(array_unique(array_merge(
+            array_column($dataRows, 'email'),
+            array_column($dataRows, 'base_email')
+        )));
+
+        // Load existing STUDENT users by email only.
+        // Do NOT match by guardian_phone (siblings share the same phone).
+        $existingUsers = collect();
+        if (! empty($allEmails)) {
+            $existingUsers = User::role('student')
+                ->whereIn('email', $allEmails)
+                ->get();
+        }
+        $usersByEmail = $existingUsers->keyBy('email')->all();
+        $createdInRun = []; // email => User, for duplicate rows in same file
+
+        foreach ($dataRows as $r) {
+            $lineNumber = $r['line'];
+            $fullName = $r['full_name'];
+            $className = $r['class_name'];
+            $guardianName = $r['guardian_name'];
+            $guardianPhone = $r['guardian_phone'];
+            $extraGuardians = $r['extra_guardians'];
+            $generatedEmail = $r['email'];
+            $baseEmail = $r['base_email'];
+
+            $classId = null;
+            if ($className !== '') {
+                $classId = $classIdsByName[$className] ?? null;
+                if ($classId === null) {
+                    $results['errors'][] = "Line {$lineNumber}: Class '{$className}' not found";
+
+                    continue;
+                }
+            }
+
+            // Match by generated email first, then base email (handles re-import: base exists, generated gets "2")
+            $existingUser = $usersByEmail[$generatedEmail] ?? $usersByEmail[$baseEmail] ?? $createdInRun[$generatedEmail] ?? null;
+
+            try {
+                if ($existingUser) {
+                    $existingUser->update([
+                        'name' => $fullName,
+                        'class_id' => $classId,
+                        'guardian_name' => $guardianName !== '' ? $guardianName : null,
+                        'guardian_phone' => $guardianPhone !== '' ? $guardianPhone : null,
+                        'extra_guardians' => $extraGuardians !== [] ? $extraGuardians : null,
+                    ]);
+                    $results['updated']++;
+                    // So next row with same email finds this user if we created in this run
+                    if (isset($createdInRun[$generatedEmail])) {
+                        $usersByEmail[$generatedEmail] = $existingUser;
+                    }
+                } else {
+                    $password = $guardianPhone !== '' ? $guardianPhone : bin2hex(random_bytes(8));
+                    $user = User::create([
+                        'name' => $fullName,
+                        'email' => $generatedEmail,
+                        'password' => Hash::make($password),
+                        'class_id' => $classId,
+                        'guardian_name' => $guardianName !== '' ? $guardianName : null,
+                        'guardian_phone' => $guardianPhone !== '' ? $guardianPhone : null,
+                        'extra_guardians' => $extraGuardians !== [] ? $extraGuardians : null,
+                    ]);
+                    if ($studentRole) {
+                        $user->assignRole($studentRole);
+                    }
+                    $results['created']++;
+                    $createdInRun[$generatedEmail] = $user;
+                    $usersByEmail[$generatedEmail] = $user;
+                }
+            } catch (\Exception $e) {
+                Log::error('Import student error', ['line' => $lineNumber, 'error' => $e->getMessage()]);
+                $results['errors'][] = "Line {$lineNumber}: {$e->getMessage()}";
+            }
+        }
+
+        return response($results, Response::HTTP_OK);
+    }
+}
+
+===== app/Http/Controllers/Api/SchoolClassController.php =====
+
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\SchoolClass;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
+
+class SchoolClassController extends Controller
+{
+    /**
+     * Display a listing of classes.
+     */
+    public function index(Request $request): Response
+    {
+        $classes = SchoolClass::query()
+            ->withCount('students')
+            ->orderBy('name')
+            ->when($request->filled('search'), function ($query) use ($request) {
+                $search = $request->string('search');
+                $query->where('name', 'like', "%{$search}%");
+            })
+            ->paginate($request->integer('per_page', 50));
+
+        return response($classes, Response::HTTP_OK);
+    }
+
+    /**
+     * Store a newly created class.
+     */
+    public function store(Request $request): Response
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255', 'unique:school_classes,name'],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $class = SchoolClass::create($validated);
+
+        Log::info('SchoolClass created via API', [
+            'id' => $class->id,
+            'name' => $class->name,
+            'user_id' => $request->user()?->id,
+            'user_email' => $request->user()?->email,
+        ]);
+
+        return response(['class' => $class], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Display the specified class.
+     */
+    public function show(SchoolClass $class): Response
+    {
+        $class->loadCount('students');
+
+        return response(['class' => $class], Response::HTTP_OK);
+    }
+
+    /**
+     * Update the specified class.
+     */
+    public function update(Request $request, SchoolClass $class): Response
+    {
+        $validated = $request->validate([
+            'name' => ['sometimes', 'string', 'max:255', 'unique:school_classes,name,'.$class->id],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $class->update($validated);
+
+        Log::info('SchoolClass updated via API', [
+            'id' => $class->id,
+            'validated' => $validated,
+            'user_id' => $request->user()?->id,
+            'user_email' => $request->user()?->email,
+        ]);
+
+        return response(['class' => $class->fresh()], Response::HTTP_OK);
+    }
+
+    /**
+     * Remove the specified class.
+     */
+    public function destroy(SchoolClass $class): Response
+    {
+        $class->delete();
+
+        return response()->noContent();
+    }
+}
+
+===== app/Models/User.php =====
+
+<?php
+
+namespace App\Models;
+
+// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Fortify\TwoFactorAuthenticatable;
+use Laravel\Sanctum\HasApiTokens;
+use Spatie\Permission\Traits\HasRoles;
+
+class User extends Authenticatable
+{
+    /** @use HasFactory<\Database\Factories\UserFactory> */
+    use HasApiTokens;
+
+    use HasFactory;
+    use HasRoles;
+    use Notifiable;
+    use TwoFactorAuthenticatable;
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'class_id',
+        'guardian_name',
+        'guardian_phone',
+        'guardian_relationship',
+        'extra_guardians',
+        'home_latitude',
+        'home_longitude',
+        'home_address',
+        'pickup_notes',
+    ];
+
+    /**
+     * The attributes that should be hidden for serialization.
+     *
+     * @var list<string>
+     */
+    protected $hidden = [
+        'password',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'remember_token',
+    ];
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+            'two_factor_confirmed_at' => 'datetime',
+            'extra_guardians' => 'array',
+        ];
+    }
+
+    public function schoolClass(): BelongsTo
+    {
+        return $this->belongsTo(SchoolClass::class, 'class_id');
+    }
+
+    public function fees(): HasMany
+    {
+        return $this->hasMany(StudentFee::class);
+    }
+
+    public function termBalances(): HasMany
+    {
+        return $this->hasMany(StudentTermBalance::class);
+    }
+
+    public function academicResults(): HasMany
+    {
+        return $this->hasMany(AcademicResult::class);
+    }
+
+    public function getTotalFeesAttribute(): float
+    {
+        return (float) $this->fees()->sum('amount');
+    }
+
+    public function getTotalPaidAttribute(): float
+    {
+        return (float) $this->fees()->sum('amount_paid');
+    }
+
+    public function getTotalBalanceAttribute(): float
+    {
+        return $this->total_fees - $this->total_paid;
+    }
+
+    public function staffProfile(): HasOne
+    {
+        return $this->hasOne(StaffProfile::class);
+    }
+
+    public function tripStops(): HasMany
+    {
+        return $this->hasMany(TripStop::class, 'student_id');
+    }
+
+    public function assignedBus(): HasOne
+    {
+        return $this->hasOne(StudentTransport::class, 'student_id');
+    }
+}
+
+===== app/Models/SchoolClass.php =====
+
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class SchoolClass extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'name',
+        'grade_code',
+        'description',
+        'base_fee',
+        'uniform_fee',
+    ];
+
+    public function students(): HasMany
+    {
+        return $this->hasMany(User::class, 'class_id')->role('student');
+    }
+
+    public function academicResults(): HasMany
+    {
+        return $this->hasMany(AcademicResult::class);
+    }
+
+    public function teacherAssignments(): HasMany
+    {
+        return $this->hasMany(TeacherClassAssignment::class);
+    }
+
+    public function teachers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'teacher_class_assignments')
+            ->withPivot('role', 'subject_id')
+            ->withTimestamps();
+    }
+}
+
+===== app/Services/EmailGeneratorService.php =====
+
+<?php
+
+namespace App\Services;
+
+use App\Models\SystemSetting;
+use App\Models\User;
+use Illuminate\Support\Str;
+
+class EmailGeneratorService
+{
+    /**
+     * Get the base email (prefix@domain) for a full name, without duplicate-suffix logic.
+     * Used for matching existing users during import.
+     */
+    public static function getBaseEmailFromName(string $fullName): string
+    {
+        $domain = SystemSetting::get('email_domain', config('school.email_domain', 'student.local'));
+        $format = SystemSetting::get('email_format', '{firstname}.{lastname}');
+
+        $parts = preg_split('/\s+/', trim($fullName), -1, PREG_SPLIT_NO_EMPTY);
+
+        if (empty($parts)) {
+            return 'user'.rand(1000, 9999).'@'.$domain;
+        }
+
+        $firstName = Str::slug($parts[0] ?? '');
+        $lastName = Str::slug($parts[1] ?? '');
+        $fullNameSlug = Str::slug(implode('', $parts));
+
+        $prefix = match ($format) {
+            '{firstname}.{lastname}' => $firstName.($lastName ? '.'.$lastName : ''),
+            '{fullname}' => $fullNameSlug,
+            '{firstname}{lastname}' => $firstName.$lastName,
+            '{firstname}' => $firstName,
+            default => $firstName.($lastName ? '.'.$lastName : ''),
+        };
+
+        if (empty($prefix)) {
+            return 'user'.rand(1000, 9999).'@'.$domain;
+        }
+
+        return $prefix.'@'.$domain;
+    }
+
+    /**
+     * Generate a unique email from a full name using system settings.
+     *
+     * Rules:
+     * - Use email format from system settings (e.g., {firstname}.{lastname})
+     * - Use domain from system settings
+     * - Slugify and normalize
+     * - If duplicate, append number (2, 3, etc.)
+     */
+    public static function generateFromName(string $fullName): string
+    {
+        $domain = SystemSetting::get('email_domain', config('school.email_domain', 'student.local'));
+        $format = SystemSetting::get('email_format', '{firstname}.{lastname}');
+
+        $parts = preg_split('/\s+/', trim($fullName), -1, PREG_SPLIT_NO_EMPTY);
+
+        if (empty($parts)) {
+            $parts = ['user'.rand(1000, 9999)];
+        }
+
+        $firstName = Str::slug($parts[0] ?? '');
+        $lastName = Str::slug($parts[1] ?? '');
+        $fullNameSlug = Str::slug(implode('', $parts));
+
+        // Build email prefix based on format
+        $prefix = match ($format) {
+            '{firstname}.{lastname}' => $firstName.($lastName ? '.'.$lastName : ''),
+            '{fullname}' => $fullNameSlug,
+            '{firstname}{lastname}' => $firstName.$lastName,
+            '{firstname}' => $firstName,
+            default => $firstName.($lastName ? '.'.$lastName : ''),
+        };
+
+        if (empty($prefix)) {
+            $prefix = 'user'.rand(1000, 9999);
+        }
+
+        $baseEmail = $prefix.'@'.$domain;
+
+        if (! User::where('email', $baseEmail)->exists()) {
+            return $baseEmail;
+        }
+
+        // Handle duplicates
+        $counter = 2;
+        while (User::where('email', $prefix.$counter.'@'.$domain)->exists()) {
+            $counter++;
+        }
+
+        return $prefix.$counter.'@'.$domain;
+    }
+}
+
+===== routes/web.php =====
+
+<?php
+
+use App\Http\Controllers\Admin\FeeActivityController as AdminFeeActivityPageController;
+use App\Http\Controllers\Admin\FeeClassController as AdminFeeClassPageController;
+use App\Http\Controllers\Admin\FeeController as AdminFeePageController;
+use App\Http\Controllers\Admin\FeeSummaryController as AdminFeeSummaryPageController;
+use App\Http\Controllers\Admin\ResultController as AdminResultPageController;
+use App\Http\Controllers\Admin\ResultEditController;
+use App\Http\Controllers\Admin\ResultViewController;
+use App\Http\Controllers\Admin\SchoolClassController as AdminSchoolClassPageController;
+use App\Http\Controllers\Admin\StaffController as AdminStaffPageController;
+use App\Http\Controllers\Admin\StreamComparisonController;
+use App\Http\Controllers\Admin\StudentController as AdminStudentPageController;
+use App\Http\Controllers\Admin\SystemSettingsController;
+use App\Http\Controllers\Admin\TeachersController as AdminTeachersPageController;
+use App\Http\Controllers\Admin\TripController as AdminTripPageController;
+use App\Http\Controllers\Admin\UserController as AdminUserPageController;
+use App\Http\Controllers\Api\AdminFeeCreateStudentsController;
+use App\Http\Controllers\Api\AdminFeeImportController;
+use App\Http\Controllers\Api\AdminFeeImportFromSpreadsheetController;
+use App\Http\Controllers\Api\AdminFeePreviewController;
+use App\Http\Controllers\Api\AdminUserController;
+use App\Http\Controllers\Api\BusController;
+use App\Http\Controllers\Api\FeeActivityController as ApiFeeActivityController;
+use App\Http\Controllers\Api\FeeClassController as ApiFeeClassController;
+use App\Http\Controllers\Api\LocationController as ApiLocationController;
+use App\Http\Controllers\Api\PayrollController as ApiPayrollController;
+use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\ResultAnalyticsController;
+use App\Http\Controllers\Api\ResultImportController;
+use App\Http\Controllers\Api\ResultUpdateController;
+use App\Http\Controllers\Api\SchoolClassController as ApiSchoolClassController;
+use App\Http\Controllers\Api\StaffController as ApiStaffController;
+use App\Http\Controllers\Api\StaffDepartmentController as ApiStaffDepartmentController;
+use App\Http\Controllers\Api\StudentController as ApiStudentController;
+use App\Http\Controllers\Api\TeacherClassAssignmentController;
+use App\Http\Controllers\Api\TransportTripController;
+use App\Http\Controllers\Transport\LocationController as TransportLocationPageController;
+use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
+use Laravel\Fortify\Features;
+
+// Register routes (redirect to login when registration is disabled)
+Route::get('register', fn () => Inertia::render('auth/register'))->name('register');
+Route::post('register', fn () => redirect()->route('login'))->name('register.store');
+
+Route::get('/', function () {
+    return Inertia::render('welcome', [
+        'canRegister' => Features::enabled(Features::registration()),
+    ]);
+})->name('home');
+
+Route::get('dashboard', function () {
+    return Inertia::render('dashboard');
+})->middleware(['auth', 'verified'])->name('dashboard');
+
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('admin/dashboard', function () {
+        return Inertia::render('dashboard');
+    })->name('admin.dashboard');
+
+    Route::get('admin', function () {
+        return redirect()->route('admin.dashboard');
+    })->name('admin');
+
+    Route::get('admin/users', [AdminUserPageController::class, 'index'])
+        ->middleware('permission:manage roles')
+        ->name('admin.users.index');
+
+    Route::get('admin/students', [AdminStudentPageController::class, 'index'])
+        ->middleware('permission:view students')
+        ->name('admin.students.index');
+
+    Route::get('admin/staff', [AdminStaffPageController::class, 'index'])
+        ->middleware('permission:view staff')
+        ->name('admin.staff.index');
+
+    // Staff Profiles & Payroll Management
+    Route::get('admin/staff/profiles', function () {
+        return Inertia::render('admin/staff/profiles');
+    })->middleware('permission:view staff|manage staff')
+        ->name('admin.staff.profiles');
+
+    Route::get('admin/payroll', function () {
+        return Inertia::render('admin/payroll/index');
+    })->middleware('permission:view payroll|manage payroll')
+        ->name('admin.payroll.index');
+
+    Route::get('admin/payroll/{id}', function ($id) {
+        return Inertia::render('admin/payroll/payslip', ['payrollId' => $id]);
+    })->middleware('permission:view payroll|manage payroll')
+        ->name('admin.payroll.show');
+
+    Route::get('admin/teachers', [AdminTeachersPageController::class, 'index'])
+        ->middleware('permission:view teachers')
+        ->name('admin.teachers.index');
+
+    Route::get('admin/classes', [AdminSchoolClassPageController::class, 'index'])
+        ->middleware('permission:manage classes')
+        ->name('admin.classes.index');
+
+    Route::get('admin/fees', [AdminFeePageController::class, 'index'])
+        ->middleware('permission:view fees')
+        ->name('admin.fees.index');
+
+    Route::get('admin/fees/activities', [AdminFeeActivityPageController::class, 'index'])
+        ->middleware('permission:manage fees')
+        ->name('admin.fees.activities.index');
+
+    Route::get('admin/fees/classes', [AdminFeeClassPageController::class, 'index'])
+        ->middleware('permission:manage fees')
+        ->name('admin.fees.classes.index');
+
+    Route::get('admin/fees/summary', [AdminFeeSummaryPageController::class, 'index'])
+        ->middleware('permission:view fees')
+        ->name('admin.fees.summary.index');
+
+    Route::get('admin/results', [AdminResultPageController::class, 'index'])
+        ->middleware('permission:view results|manage results|manage academics')
+        ->name('admin.results.index');
+
+    Route::get('admin/results/view', [ResultViewController::class, 'index'])
+        ->middleware('permission:view results|manage results|manage academics')
+        ->name('admin.results.view');
+
+    Route::get('admin/results/edit', [ResultEditController::class, 'index'])
+        ->middleware('permission:manage results|manage academics')
+        ->name('admin.results.edit');
+
+    Route::get('admin/results/streams', [StreamComparisonController::class, 'index'])
+        ->middleware('permission:view results|manage results|manage academics')
+        ->name('admin.results.streams');
+
+    Route::get('transport', function () {
+        return redirect()->route('admin.transport.trips-monitor');
+    })->middleware('permission:manage transport|view transport')
+        ->name('transport');
+
+    Route::get('admin/transport/trips', AdminTripPageController::class)
+        ->middleware('permission:manage transport')
+        ->name('admin.transport.trips.index');
+
+    Route::get('admin/transport/buses', fn () => Inertia::render('admin/transport/buses'))
+        ->middleware('permission:manage transport')
+        ->name('admin.transport.buses');
+
+    Route::get('admin/transport/route-planner', fn () => Inertia::render('admin/transport/route-planner'))
+        ->middleware('permission:manage transport')
+        ->name('admin.transport.route-planner');
+
+    Route::get('admin/transport/trips-monitor', fn () => Inertia::render('admin/transport/trips-monitor'))
+        ->middleware('permission:manage transport|view transport')
+        ->name('admin.transport.trips-monitor');
+
+    // Driver / assistant location marking page (can also be used by admins during setup).
+    Route::get('transport/mark-location', [TransportLocationPageController::class, 'index'])
+        ->name('transport.mark-location');
+
+    // Admin user management API used by the Inertia UI.
+    // Uses the web guard + session, so it works when you're logged into the web app.
+    Route::prefix('admin/api')->group(function () {
+        // User management
+        Route::middleware('permission:manage roles')->group(function () {
+            Route::apiResource('users', AdminUserController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
+            Route::get('permissions', [PermissionController::class, 'index'])->name('admin.api.permissions.index');
+        });
+
+        // Staff profiles (uses web session; same auth as other admin APIs)
+        Route::middleware('permission:view staff|manage staff')->group(function () {
+            Route::get('staff', [ApiStaffController::class, 'index'])->name('admin.api.staff.index');
+            Route::get('staff/{id}', [ApiStaffController::class, 'show'])->name('admin.api.staff.show');
+            Route::get('staff-departments', [ApiStaffDepartmentController::class, 'index'])->name('admin.api.staff-departments.index');
+        });
+        Route::middleware('permission:manage staff')->group(function () {
+            Route::post('staff', [ApiStaffController::class, 'store'])->name('admin.api.staff.store');
+            Route::match(['put', 'patch'], 'staff/{id}', [ApiStaffController::class, 'update'])->name('admin.api.staff.update');
+            Route::delete('staff/{id}', [ApiStaffController::class, 'destroy'])->name('admin.api.staff.destroy');
+        });
+
+        // Payroll calculate preview (for staff profile salary breakdown)
+        Route::middleware('permission:view staff|manage staff|manage payroll')->group(function () {
+            Route::post('payroll/calculate-preview', [ApiPayrollController::class, 'calculatePreview'])->name('admin.api.payroll.calculate-preview');
+        });
+
+        // Transport management
+        Route::middleware('permission:manage transport')->group(function () {
+            Route::apiResource('transport/buses', BusController::class);
+            Route::get('transport/buses/{bus}/students', [TransportTripController::class, 'studentsForBus']);
+            Route::get('transport/trips/students/unassigned', [TransportTripController::class, 'unassignedStudents']);
+            Route::apiResource('transport/trips', TransportTripController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
+        });
+
+        // Class management (used by admin/students UI & student-admins).
+        Route::middleware('permission:manage classes')->group(function () {
+            Route::apiResource('classes', ApiSchoolClassController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
+        });
+        // Classes list for teacher assignment (view classes or manage academics).
+        Route::middleware('permission:view classes|manage classes|manage academics')->group(function () {
+            Route::get('classes-for-assignment', fn () => response()->json(
+                \App\Models\SchoolClass::orderBy('name')->get(['id', 'name', 'grade_code'])
+            ))->name('admin.api.classes-for-assignment');
+        });
+
+        // Fee management (admin UI)
+        Route::middleware('permission:manage fees')->group(function () {
+            Route::post('fees/import', AdminFeeImportController::class)->name('admin.api.fees.import');
+            Route::post('fees/import/from-spreadsheet', AdminFeeImportFromSpreadsheetController::class)->name('admin.api.fees.import.from-spreadsheet');
+            Route::post('fees/import/preview', AdminFeePreviewController::class)->name('admin.api.fees.import.preview');
+            Route::apiResource('fees/activities', ApiFeeActivityController::class)->only(['index', 'store', 'update', 'destroy']);
+            Route::apiResource('fees/classes', ApiFeeClassController::class)->only(['index', 'update']);
+        });
+        Route::middleware(['permission:manage fees', 'permission:manage students'])->group(function () {
+            Route::post('fees/import/create-students', AdminFeeCreateStudentsController::class)->name('admin.api.fees.import.create-students');
+        });
+
+        // Student management (admin UI, uses web guard + session).
+        Route::middleware('permission:view students|manage students')->group(function () {
+            Route::get('students', [ApiStudentController::class, 'index'])->name('admin.api.students.index');
+            Route::get('students/duplicates', [ApiStudentController::class, 'duplicates'])->name('admin.api.students.duplicates');
+            Route::get('students/{student}', [ApiStudentController::class, 'show'])->name('admin.api.students.show');
+        });
+        // Result import & teacher-class assignments (academics)
+        Route::middleware('permission:manage results|manage academics')->group(function () {
+            Route::post('results/import/preview', [ResultImportController::class, 'preview'])->name('admin.api.results.import.preview');
+            Route::post('results/import', [ResultImportController::class, 'import'])->name('admin.api.results.import');
+            Route::get('teacher-class-assignments', [TeacherClassAssignmentController::class, 'index'])->name('admin.api.teacher-class-assignments.index');
+            Route::post('teacher-class-assignments', [TeacherClassAssignmentController::class, 'store'])->name('admin.api.teacher-class-assignments.store');
+            Route::delete('teacher-class-assignments/{teacherClassAssignment}', [TeacherClassAssignmentController::class, 'destroy'])->name('admin.api.teacher-class-assignments.destroy');
+        });
+
+        // Results analytics (view)
+        Route::middleware('permission:view results|manage results|manage academics')->group(function () {
+            Route::get('results/class/{classId}/{termId}', [ResultAnalyticsController::class, 'classResults'])->name('admin.api.results.class');
+            Route::get('results/student/{studentId}', [ResultAnalyticsController::class, 'studentResults'])->name('admin.api.results.student');
+            Route::post('results/streams/compare', [StreamComparisonController::class, 'compare'])->name('admin.api.results.streams.compare');
+        });
+
+        // Results management (edit/delete)
+        Route::middleware('permission:manage results|manage academics')->group(function () {
+            Route::put('results/{resultId}', [ResultUpdateController::class, 'update'])->name('admin.api.results.update');
+            Route::post('results/bulk-update', [ResultUpdateController::class, 'bulkUpdate'])->name('admin.api.results.bulk-update');
+            Route::delete('results/{resultId}', [ResultUpdateController::class, 'destroy'])->name('admin.api.results.destroy');
+            Route::delete('results/student/{studentId}', [ResultUpdateController::class, 'destroyStudent'])->name('admin.api.results.destroy-student');
+            Route::delete('results/bulk-destroy', [ResultUpdateController::class, 'bulkDestroy'])->name('admin.api.results.bulk-destroy');
+        });
+
+        Route::middleware('permission:manage students')->group(function () {
+            Route::post('students', [ApiStudentController::class, 'store'])->name('admin.api.students.store');
+            Route::post('students/import', [ApiStudentController::class, 'import'])->name('admin.api.students.import');
+            Route::delete('students/bulk', [ApiStudentController::class, 'bulkDestroy'])->name('admin.api.students.bulk-destroy');
+            Route::match(['put', 'patch'], 'students/{student}', [ApiStudentController::class, 'update'])->name('admin.api.students.update');
+            Route::delete('students/{student}', [ApiStudentController::class, 'destroy'])->name('admin.api.students.destroy');
+        });
+    });
+
+    // Transport location API for marking pickup / dropoff locations.
+    Route::post('transport/locations', [ApiLocationController::class, 'store'])
+        ->name('transport.locations.store');
+
+    // System settings (only super@gmail.com)
+    Route::middleware([\App\Http\Middleware\EnsureSuperAdmin::class])->group(function () {
+        Route::get('admin/settings', [SystemSettingsController::class, 'index'])
+            ->name('admin.settings.index');
+        Route::post('admin/settings', [SystemSettingsController::class, 'update'])
+            ->name('admin.settings.update');
+    });
+});
+
+// Dedicated admin login page that still posts to the normal Fortify login route.
+Route::get('admin/login', function (\Illuminate\Http\Request $request) {
+    return Inertia::render('auth/login', [
+        'canResetPassword' => Features::enabled(Features::resetPasswords()),
+        'canRegister' => false,
+        'status' => $request->session()->get('status'),
+        'mode' => 'admin',
+    ]);
+})->name('admin.login');
+
+require __DIR__.'/settings.php';
+
+===== routes/api.php =====
+
+<?php
+
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BusController;
+use App\Http\Controllers\Api\DriverController;
+use App\Http\Controllers\Api\FeeController;
+use App\Http\Controllers\Api\ModuleController;
+use App\Http\Controllers\Api\PayrollController;
+use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\ResultController;
+use App\Http\Controllers\Api\RoleAssignmentController;
+use App\Http\Controllers\Api\RoleController;
+use App\Http\Controllers\Api\SchoolClassController;
+use App\Http\Controllers\Api\StaffController;
+use App\Http\Controllers\Api\StaffDepartmentController;
+use App\Http\Controllers\Api\StudentController;
+use App\Http\Controllers\Api\SystemSettingController;
+use App\Http\Controllers\Api\TeachersController;
+use App\Http\Controllers\Api\TransportTripController;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('auth')->group(function (): void {
+    Route::post('login', [AuthController::class, 'login']);
+
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::post('logout', [AuthController::class, 'logout']);
+        Route::get('me', [AuthController::class, 'me']);
+
+        Route::get('fees', [FeeController::class, 'index']);
+        Route::get('fees/{studentFee}', [FeeController::class, 'show']);
+
+        Route::get('results', [ResultController::class, 'index']);
+    });
+});
+
+// Admin + internal APIs used by the Inertia (web) UI.
+// These use the normal "web" session guard, not Sanctum API tokens.
+Route::middleware(['auth'])->group(function (): void {
+    Route::apiResource('roles', RoleController::class);
+    Route::apiResource('permissions', PermissionController::class)->only(['index', 'show']);
+
+    Route::post('assign-role-to-user', [RoleAssignmentController::class, 'assignRoleToUser'])
+        ->name('assign-role-to-user');
+
+    Route::post('assign-permissions-to-role', [RoleAssignmentController::class, 'assignPermissionsToRole'])
+        ->name('assign-permissions-to-role');
+
+    Route::get('modules-available', [ModuleController::class, 'modulesAvailable'])
+        ->name('modules-available');
+
+    Route::middleware('permission:manage roles')->group(function (): void {
+        Route::apiResource('classes', SchoolClassController::class);
+    });
+
+    // Student listing & detail: allow either "view students" or "manage students".
+    Route::middleware('permission:view students|manage students')->group(function (): void {
+        Route::get('students', [StudentController::class, 'index']);
+        Route::get('students/{student}', [StudentController::class, 'show']);
+    });
+    Route::middleware('permission:manage students')->group(function (): void {
+        Route::post('students', [StudentController::class, 'store']);
+        Route::post('students/import', [StudentController::class, 'import']);
+        Route::match(['put', 'patch'], 'students/{student}', [StudentController::class, 'update']);
+        Route::delete('students/{student}', [StudentController::class, 'destroy']);
+    });
+
+    Route::middleware('permission:view staff')->group(function (): void {
+        Route::get('staff', [StaffController::class, 'index']);
+        Route::get('staff/{staff}', [StaffController::class, 'show']);
+    });
+    Route::middleware('permission:manage staff')->group(function (): void {
+        Route::post('staff', [StaffController::class, 'store']);
+        Route::match(['put', 'patch'], 'staff/{staff}', [StaffController::class, 'update']);
+        Route::delete('staff/{staff}', [StaffController::class, 'destroy']);
+    });
+
+    Route::middleware('permission:view teachers')->group(function (): void {
+        Route::get('teachers', [TeachersController::class, 'index']);
+        Route::get('teachers/{teacher}', [TeachersController::class, 'show']);
+    });
+    Route::middleware('permission:manage teachers')->group(function (): void {
+        Route::post('teachers', [TeachersController::class, 'store']);
+        Route::match(['put', 'patch'], 'teachers/{teacher}', [TeachersController::class, 'update']);
+        Route::delete('teachers/{teacher}', [TeachersController::class, 'destroy']);
+    });
+
+    Route::apiResource('drivers', DriverController::class);
+
+    // Staff departments
+    Route::apiResource('departments', StaffDepartmentController::class);
+
+    // Payroll routes
+    Route::middleware('permission:manage payroll')->group(function (): void {
+        Route::get('payroll', [PayrollController::class, 'index']);
+        Route::post('payroll/generate', [PayrollController::class, 'generate']);
+        Route::get('payroll/{payroll}', [PayrollController::class, 'show']);
+        Route::post('payroll/{payroll}/approve', [PayrollController::class, 'approve']);
+        Route::post('payroll/{payroll}/mark-paid', [PayrollController::class, 'markAsPaid']);
+        Route::delete('payroll/{payroll}', [PayrollController::class, 'destroy']);
+        Route::post('payroll/calculate-preview', [PayrollController::class, 'calculatePreview']);
+    });
+
+    // System settings (public read, super-admin write)
+    Route::get('system-settings', [SystemSettingController::class, 'index']);
+    Route::middleware('role:super-admin')->group(function (): void {
+        Route::post('system-settings', [SystemSettingController::class, 'update']);
+        Route::delete('system-settings/logo', [SystemSettingController::class, 'deleteLogo']);
+    });
+
+    // Transport Module routes
+    Route::prefix('transport')->group(function (): void {
+        // Bus management (admin only)
+        Route::middleware('permission:manage transport')->group(function (): void {
+            Route::apiResource('buses', BusController::class);
+            Route::get('trips/students/unassigned', [TransportTripController::class, 'unassignedStudents']);
+            Route::get('buses/{bus}/students', [TransportTripController::class, 'studentsForBus']);
+        });
+
+        // Trip management (admin and planners)
+        Route::middleware('permission:manage transport|view transport')->group(function (): void {
+            Route::get('trips', [TransportTripController::class, 'index']);
+            Route::get('trips/{trip}', [TransportTripController::class, 'show']);
+        });
+
+        Route::middleware('permission:manage transport')->group(function (): void {
+            Route::post('trips', [TransportTripController::class, 'store']);
+            Route::match(['put', 'patch'], 'trips/{trip}', [TransportTripController::class, 'update']);
+            Route::delete('trips/{trip}', [TransportTripController::class, 'destroy']);
+        });
+
+        // Stop status updates (drivers and assistants)
+        Route::middleware('permission:execute trips')->group(function (): void {
+            Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+        });
+    });
+}
+);
+
+// Mobile API routes for drivers/assistants
+Route::middleware(['auth:sanctum'])->prefix('mobile/transport')->group(function (): void {
+    Route::get('trips/today', [TransportTripController::class, 'todaysTrips']);
+    Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+});

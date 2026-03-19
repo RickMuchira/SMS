@@ -13,66 +13,102 @@ use Spatie\Permission\Models\Role;
 class AdminDriverController extends Controller
 {
     /**
-     * List staff with driver/assistant designation flags (for admin/drivers page).
-     * Uses same source as staff profiles; only staff with a profile can be designated.
+     * List staff and admins with driver/assistant designation flags (for admin/drivers page).
+     * Includes: staff with profiles + users who have manage drivers or manage transport (admins).
      */
     public function index(Request $request): Response
     {
-        $query = StaffProfile::with(['user.roles', 'department'])
+        $search = $request->string('search');
+        $employmentStatus = $request->string('employment_status');
+        $perPage = min($request->integer('per_page', 50), 500);
+
+        $staffQuery = StaffProfile::with(['user.roles', 'department'])
             ->orderBy('created_at', 'desc');
 
-        if ($request->filled('search')) {
-            $search = $request->string('search');
-            $query->whereHas('user', function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%");
-            })->orWhere('employee_id', 'like', "%{$search}%")
-                ->orWhere('job_title', 'like', "%{$search}%");
+        if ($search->isNotEmpty()) {
+            $staffQuery->where(function ($q) use ($search) {
+                $q->whereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%"))
+                    ->orWhere('employee_id', 'like', "%{$search}%")
+                    ->orWhere('job_title', 'like', "%{$search}%");
+            });
         }
 
-        if ($request->filled('employment_status')) {
-            $query->where('employment_status', $request->string('employment_status'));
+        if ($employmentStatus->isNotEmpty()) {
+            $staffQuery->where('employment_status', $employmentStatus);
         }
 
-        $perPage = $request->integer('per_page', 50);
-        $staffProfiles = $query->paginate(min($perPage, 500));
+        $staffProfiles = $staffQuery->get();
+        $staffUserIds = $staffProfiles->pluck('user_id')->all();
 
-        $data = $staffProfiles->getCollection()->map(function (StaffProfile $profile) {
-            $roles = $profile->user->roles->pluck('name')->all();
+        $adminUserIds = User::query()
+            ->whereNotIn('id', $staffUserIds)
+            ->where(function ($q) {
+                $q->whereHas('permissions', fn ($p) => $p->whereIn('name', ['manage drivers', 'manage transport']))
+                    ->orWhereHas('roles.permissions', fn ($p) => $p->whereIn('name', ['manage drivers', 'manage transport']));
+            })
+            ->when($search->isNotEmpty(), function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            })
+            ->with('roles')
+            ->orderBy('name')
+            ->get()
+            ->pluck('id')
+            ->all();
+
+        $allUserIds = array_unique(array_merge($staffUserIds, $adminUserIds));
+        $users = User::query()
+            ->whereIn('id', $allUserIds)
+            ->with(['roles', 'staffProfile.department'])
+            ->orderBy('name')
+            ->get();
+
+        $profileMap = $staffProfiles->keyBy('user_id');
+
+        $data = $users->map(function (User $user) use ($profileMap) {
+            $profile = $profileMap->get($user->id);
+            $roles = $user->roles->pluck('name')->all();
 
             return [
-                'id' => $profile->id,
-                'user_id' => $profile->user_id,
-                'employee_id' => $profile->employee_id,
+                'id' => $profile?->id ?? 'u'.$user->id,
+                'user_id' => $user->id,
+                'employee_id' => $profile?->employee_id ?? null,
                 'user' => [
-                    'id' => $profile->user->id,
-                    'name' => $profile->user->name,
-                    'email' => $profile->user->email,
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
                 ],
-                'job_title' => $profile->job_title,
-                'department' => $profile->department ? [
+                'job_title' => $profile?->job_title ?? null,
+                'department' => $profile?->department ? [
                     'id' => $profile->department->id,
                     'name' => $profile->department->name,
                 ] : null,
-                'employment_status' => $profile->employment_status,
+                'employment_status' => $profile?->employment_status ?? 'active',
                 'is_driver' => in_array('driver', $roles, true),
                 'is_assistant' => in_array('assistant', $roles, true),
             ];
-        });
+        })->values();
+
+        $total = $data->count();
+        $page = max(1, $request->integer('page', 1));
+        $offset = ($page - 1) * $perPage;
+        $paginated = $data->slice($offset, $perPage)->values();
+        $lastPage = (int) ceil($total / $perPage) ?: 1;
 
         return response([
-            'data' => $data,
+            'data' => $paginated,
             'meta' => [
-                'current_page' => $staffProfiles->currentPage(),
-                'last_page' => $staffProfiles->lastPage(),
-                'per_page' => $staffProfiles->perPage(),
-                'total' => $staffProfiles->total(),
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
             ],
         ], Response::HTTP_OK);
     }
 
     /**
      * Update driver/assistant designation for a user (sync roles).
-     * Only users with a staff profile can be designated.
+     * Staff and admins (manage drivers / manage transport) can be designated.
      */
     public function update(Request $request, User $user): JsonResponse
     {
@@ -80,13 +116,6 @@ class AdminDriverController extends Controller
             'is_driver' => ['required', 'boolean'],
             'is_assistant' => ['required', 'boolean'],
         ]);
-
-        if (! StaffProfile::where('user_id', $user->id)->exists()) {
-            return response()->json(
-                ['message' => 'Only staff with a profile can be designated as driver or assistant.'],
-                422
-            );
-        }
 
         $driverRole = Role::firstOrCreate(['name' => 'driver', 'guard_name' => 'web']);
         $assistantRole = Role::firstOrCreate(['name' => 'assistant', 'guard_name' => 'web']);
@@ -123,7 +152,6 @@ class AdminDriverController extends Controller
     public function drivers(): JsonResponse
     {
         $users = User::query()
-            ->whereHas('staffProfile')
             ->whereHas('roles', fn ($q) => $q->where('name', 'driver'))
             ->orderBy('name')
             ->get(['id', 'name']);
@@ -137,11 +165,74 @@ class AdminDriverController extends Controller
     public function assistants(): JsonResponse
     {
         $users = User::query()
-            ->whereHas('staffProfile')
             ->whereHas('roles', fn ($q) => $q->where('name', 'assistant'))
             ->orderBy('name')
             ->get(['id', 'name']);
 
         return response()->json(['data' => $users]);
+    }
+
+    /**
+     * Get transport-related roles and permissions for a specific staff user.
+     */
+    public function transportPermissions(User $user): JsonResponse
+    {
+        $user->load('roles', 'permissions');
+
+        return response()->json([
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
+            'roles' => $user->getRoleNames(),
+            'permissions' => [
+                'view transport' => $user->can('view transport'),
+                'manage transport' => $user->can('manage transport'),
+                'execute trips' => $user->can('execute trips'),
+            ],
+        ]);
+    }
+
+    /**
+     * Update transport-related permissions for a specific staff user.
+     */
+    public function updateTransportPermissions(Request $request, User $user): JsonResponse
+    {
+        $validated = $request->validate([
+            'view_transport' => ['required', 'boolean'],
+            'manage_transport' => ['required', 'boolean'],
+            'execute_trips' => ['required', 'boolean'],
+        ]);
+
+        $map = [
+            'view transport' => $validated['view_transport'],
+            'manage transport' => $validated['manage_transport'],
+            'execute trips' => $validated['execute_trips'],
+        ];
+
+        foreach ($map as $permissionName => $enabled) {
+            if ($enabled) {
+                $user->givePermissionTo($permissionName);
+            } else {
+                $user->revokePermissionTo($permissionName);
+            }
+        }
+
+        $user->load('roles', 'permissions');
+
+        return response()->json([
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
+            'roles' => $user->getRoleNames(),
+            'permissions' => [
+                'view transport' => $user->can('view transport'),
+                'manage transport' => $user->can('manage transport'),
+                'execute trips' => $user->can('execute trips'),
+            ],
+        ]);
     }
 }

@@ -8,6 +8,15 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { getCsrfToken } from '@/lib/csrf';
 import AppLayout from '@/layouts/app-layout';
 import type { BreadcrumbItem } from '@/types';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type StaffDriverRow = {
     id: number;
@@ -24,6 +33,12 @@ type StaffDriverRow = {
 type PaginatedResponse = {
     data: StaffDriverRow[];
     meta: { current_page: number; last_page: number; per_page: number; total: number };
+};
+
+type TransportPermissions = {
+    'view transport': boolean;
+    'manage transport': boolean;
+    'execute trips': boolean;
 };
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -45,6 +60,10 @@ export default function AdminDriversIndex() {
     const [total, setTotal] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [updatingId, setUpdatingId] = useState<number | null>(null);
+    const [permissionsDialogUser, setPermissionsDialogUser] = useState<StaffDriverRow | null>(null);
+    const [permissionsLoading, setPermissionsLoading] = useState(false);
+    const [permissionsSaving, setPermissionsSaving] = useState(false);
+    const [permissions, setPermissions] = useState<TransportPermissions | null>(null);
 
     const fetchStaff = useCallback(async () => {
         setLoading(true);
@@ -119,6 +138,75 @@ export default function AdminDriversIndex() {
         updateDesignation(row.user_id, row.is_driver, !row.is_assistant);
     }
 
+    async function openPermissionsDialog(row: StaffDriverRow) {
+        if (!canManage) return;
+        setPermissionsDialogUser(row);
+        setPermissions(null);
+        setPermissionsLoading(true);
+        setError(null);
+        try {
+            const res = await fetch(`/admin/api/drivers/${row.user_id}/transport-permissions`, {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            });
+            if (!res.ok) {
+                const body = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(body?.message ?? 'Failed to load permissions');
+            }
+            const data = (await res.json()) as {
+                permissions: TransportPermissions;
+            };
+            setPermissions(data.permissions);
+        } catch (e) {
+            setError(
+                e instanceof Error
+                    ? e.message
+                    : 'Unable to load transport permissions for this staff member.',
+            );
+        } finally {
+            setPermissionsLoading(false);
+        }
+    }
+
+    async function savePermissions() {
+        if (!canManage || !permissionsDialogUser || !permissions) return;
+        setPermissionsSaving(true);
+        setError(null);
+        try {
+            const csrf = getCsrfToken();
+            const res = await fetch(
+                `/admin/api/drivers/${permissionsDialogUser.user_id}/transport-permissions`,
+                {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                        ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        view_transport: permissions['view transport'],
+                        manage_transport: permissions['manage transport'],
+                        execute_trips: permissions['execute trips'],
+                    }),
+                },
+            );
+            if (!res.ok) {
+                const body = (await res.json().catch(() => null)) as { message?: string } | null;
+                throw new Error(body?.message ?? 'Failed to save permissions');
+            }
+            setPermissionsDialogUser(null);
+        } catch (e) {
+            setError(
+                e instanceof Error
+                    ? e.message
+                    : 'Unable to save transport permissions for this staff member.',
+            );
+        } finally {
+            setPermissionsSaving(false);
+        }
+    }
+
     return (
         <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Drivers & Assistants" />
@@ -127,8 +215,9 @@ export default function AdminDriversIndex() {
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight">Drivers & Assistants</h1>
                     <p className="text-muted-foreground">
-                        Choose which staff (from Staff Profiles) can act as drivers or assistants.
-                        These lists are used when managing buses and assigning trips.
+                        Choose which staff (from Staff Profiles) or admins (from User management) can
+                        act as drivers or assistants. These lists are used when managing buses and
+                        assigning trips.
                     </p>
                 </div>
 
@@ -136,15 +225,22 @@ export default function AdminDriversIndex() {
                     <CardHeader>
                         <CardTitle>Staff designations</CardTitle>
                         <p className="text-sm text-muted-foreground">
-                            Only staff with a profile at{' '}
+                            Staff with a profile at{' '}
                             <a
                                 href="/admin/staff/profiles"
                                 className="text-primary underline hover:no-underline"
                             >
                                 Staff Profiles
                             </a>{' '}
+                            and admins from{' '}
+                            <a
+                                href="/admin/users"
+                                className="text-primary underline hover:no-underline"
+                            >
+                                User management
+                            </a>{' '}
                             appear here. Toggle Driver or Assistant to include them in bus and trip
-                            dropdowns.
+                            dropdowns. Use Edit permissions to control transport access.
                         </p>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -204,6 +300,7 @@ export default function AdminDriversIndex() {
                                                 <th className="py-2 pr-4 font-semibold">Job title</th>
                                                 <th className="py-2 pr-4 font-semibold">Driver</th>
                                                 <th className="py-2 pr-4 font-semibold">Assistant</th>
+                                                <th className="py-2 pr-4 font-semibold">Transport access</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -253,6 +350,23 @@ export default function AdminDriversIndex() {
                                                             )}
                                                         </label>
                                                     </td>
+                                                    <td className="py-3 pr-4">
+                                                        {canManage &&
+                                                        (row.is_driver || row.is_assistant) ? (
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={() => openPermissionsDialog(row)}
+                                                            >
+                                                                Edit permissions
+                                                            </Button>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground">
+                                                                —
+                                                            </span>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -292,6 +406,132 @@ export default function AdminDriversIndex() {
                     </CardContent>
                 </Card>
             </div>
+
+            <Dialog
+                open={permissionsDialogUser !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setPermissionsDialogUser(null);
+                    }
+                }}
+            >
+                <DialogContent aria-describedby="driver-permissions-description">
+                    <DialogHeader>
+                        <DialogTitle>Edit transport permissions</DialogTitle>
+                        <DialogDescription id="driver-permissions-description">
+                            Configure what this staff member can do in the transport module (web and
+                            mobile).
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {permissionsLoading || !permissionsDialogUser || !permissions ? (
+                        <p className="text-sm text-muted-foreground">Loading permissions…</p>
+                    ) : (
+                        <div className="space-y-4">
+                            <div className="space-y-1">
+                                <p className="text-sm font-medium">
+                                    {permissionsDialogUser.user.name}{' '}
+                                    <span className="text-xs text-muted-foreground">
+                                        ({permissionsDialogUser.user.email})
+                                    </span>
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    Driver and assistant designations control who appears in
+                                    transport dropdowns. Permissions below control what they can do.
+                                </p>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="flex items-start gap-3">
+                                    <Checkbox
+                                        checked={permissions['view transport']}
+                                        onCheckedChange={(checked) =>
+                                            setPermissions((prev) =>
+                                                prev
+                                                    ? {
+                                                          ...prev,
+                                                          'view transport': Boolean(checked),
+                                                      }
+                                                    : prev,
+                                            )
+                                        }
+                                    />
+                                    <div>
+                                        <p className="text-sm font-medium">View transport</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Allows viewing buses and trips in the web dashboard and
+                                            mobile app.
+                                        </p>
+                                    </div>
+                                </label>
+
+                                <label className="flex items-start gap-3">
+                                    <Checkbox
+                                        checked={permissions['manage transport']}
+                                        onCheckedChange={(checked) =>
+                                            setPermissions((prev) =>
+                                                prev
+                                                    ? {
+                                                          ...prev,
+                                                          'manage transport': Boolean(checked),
+                                                      }
+                                                    : prev,
+                                            )
+                                        }
+                                    />
+                                    <div>
+                                        <p className="text-sm font-medium">Plan &amp; manage trips</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Grants full admin access to create or modify trips and
+                                            buses in the web app.
+                                        </p>
+                                    </div>
+                                </label>
+
+                                <label className="flex items-start gap-3">
+                                    <Checkbox
+                                        checked={permissions['execute trips']}
+                                        onCheckedChange={(checked) =>
+                                            setPermissions((prev) =>
+                                                prev
+                                                    ? {
+                                                          ...prev,
+                                                          'execute trips': Boolean(checked),
+                                                      }
+                                                    : prev,
+                                            )
+                                        }
+                                    />
+                                    <div>
+                                        <p className="text-sm font-medium">Execute trips</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Allows marking students as picked up, dropped off, or
+                                            absent from the mobile app.
+                                        </p>
+                                    </div>
+                                </label>
+                            </div>
+
+                            <DialogFooter>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setPermissionsDialogUser(null)}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    type="button"
+                                    onClick={savePermissions}
+                                    disabled={permissionsSaving}
+                                >
+                                    {permissionsSaving ? 'Saving…' : 'Save permissions'}
+                                </Button>
+                            </DialogFooter>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </AppLayout>
     );
 }

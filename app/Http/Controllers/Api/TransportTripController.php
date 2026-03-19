@@ -171,6 +171,17 @@ class TransportTripController extends Controller
             return response()->json(['message' => 'Stop does not belong to this trip'], 404);
         }
 
+        $user = $request->user();
+
+        if (
+            $user !== null
+            && ! $user->can('manage transport')
+            && $trip->driver_id !== $user->id
+            && $trip->assistant_id !== $user->id
+        ) {
+            return response()->json(['message' => 'You are not assigned to this trip.'], 403);
+        }
+
         $validated = $request->validate([
             'status' => ['required', Rule::in(['pending', 'picked_up', 'dropped_off', 'absent'])],
         ]);

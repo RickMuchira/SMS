@@ -13,7 +13,6 @@ use App\Http\Controllers\Admin\StreamComparisonController;
 use App\Http\Controllers\Admin\StudentController as AdminStudentPageController;
 use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TeachersController as AdminTeachersPageController;
-use App\Http\Controllers\Admin\TripController as AdminTripPageController;
 use App\Http\Controllers\Admin\UserController as AdminUserPageController;
 use App\Http\Controllers\Api\AdminDriverController;
 use App\Http\Controllers\Api\AdminFeeCreateStudentsController;
@@ -35,7 +34,6 @@ use App\Http\Controllers\Api\StaffController as ApiStaffController;
 use App\Http\Controllers\Api\StaffDepartmentController as ApiStaffDepartmentController;
 use App\Http\Controllers\Api\StudentController as ApiStudentController;
 use App\Http\Controllers\Api\TeacherClassAssignmentController;
-use App\Http\Controllers\Api\TransportTripController;
 use App\Http\Controllers\Transport\LocationController as TransportLocationPageController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -132,14 +130,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('permission:view results|manage results|manage academics')
         ->name('admin.results.streams');
 
-    Route::get('transport', function () {
-        return redirect()->route('admin.transport.trips-monitor');
-    })->middleware('permission:manage transport|view transport')
-        ->name('transport');
+    Route::get('transport', function (\Illuminate\Http\Request $request) {
+        $user = $request->user();
 
-    Route::get('admin/transport/trips', AdminTripPageController::class)
-        ->middleware('permission:manage transport')
-        ->name('admin.transport.trips.index');
+        if ($user?->can('manage transport')) {
+            return redirect()->route('admin.transport.buses');
+        }
+
+        return redirect()->route('transport.mark-location');
+    })->middleware('permission:manage transport|view transport|execute trips')
+        ->name('transport');
 
     Route::get('admin/transport/buses', fn () => Inertia::render('admin/transport/buses'))
         ->middleware('permission:manage transport')
@@ -152,20 +152,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
     })->middleware('permission:manage transport')
         ->name('admin.transport.buses.show');
 
-    Route::get('admin/transport/route-planner', fn () => Inertia::render('admin/transport/route-planner'))
-        ->middleware('permission:manage transport')
-        ->name('admin.transport.route-planner');
-
-    Route::get('admin/transport/trips-monitor', fn () => Inertia::render('admin/transport/trips-monitor'))
-        ->middleware('permission:manage transport|view transport')
-        ->name('admin.transport.trips-monitor');
-
     Route::get('admin/drivers', fn () => Inertia::render('admin/drivers/index'))
         ->middleware('permission:view drivers|manage drivers')
         ->name('admin.drivers.index');
 
     // Driver / assistant location marking page (can also be used by admins during setup).
     Route::get('transport/mark-location', [TransportLocationPageController::class, 'index'])
+        ->middleware('permission:manage transport|view transport|execute trips')
         ->name('transport.mark-location');
 
     // Admin user management API used by the Inertia UI.
@@ -197,10 +190,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Drivers/assistants designation (staff from staff profiles)
         Route::middleware('permission:view drivers|manage drivers')->group(function () {
             Route::get('drivers', [AdminDriverController::class, 'index'])->name('admin.api.drivers.index');
+            Route::get('drivers/{user}/transport-permissions', [AdminDriverController::class, 'transportPermissions'])->name('admin.api.drivers.transport-permissions.show');
             Route::match(['put', 'patch'], 'drivers/{user}', [AdminDriverController::class, 'update'])->name('admin.api.drivers.update');
+            Route::match(['put', 'patch'], 'drivers/{user}/transport-permissions', [AdminDriverController::class, 'updateTransportPermissions'])->name('admin.api.drivers.transport-permissions.update');
         });
 
-        // Transport management
+        // Transport management (buses & staff)
         Route::middleware('permission:manage transport')->group(function () {
             Route::get('transport/bus-staff-summary', [BusController::class, 'staffPresetsSummary'])->name('admin.api.transport.bus-staff-summary');
             Route::get('transport/buses/{bus}/staff-presets', [BusController::class, 'staffPresets'])->name('admin.api.transport.buses.staff-presets.index');
@@ -208,9 +203,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('transport/drivers', [AdminDriverController::class, 'drivers'])->name('admin.api.transport.drivers');
             Route::get('transport/assistants', [AdminDriverController::class, 'assistants'])->name('admin.api.transport.assistants');
             Route::apiResource('transport/buses', BusController::class);
-            Route::get('transport/buses/{bus}/students', [TransportTripController::class, 'studentsForBus']);
-            Route::get('transport/trips/students/unassigned', [TransportTripController::class, 'unassignedStudents']);
-            Route::apiResource('transport/trips', TransportTripController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
         });
 
         // Class management (used by admin/students UI & student-admins).
@@ -278,6 +270,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // Transport location API for marking pickup / dropoff locations.
     Route::post('transport/locations', [ApiLocationController::class, 'store'])
+        ->middleware('permission:manage transport|view transport|execute trips')
         ->name('transport.locations.store');
 
     // System settings (only super@gmail.com)

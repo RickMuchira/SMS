@@ -3,11 +3,18 @@ import React from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useAuth } from '@/context/auth-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const { permissions, roles } = useAuth();
+  const canAccessTransport =
+    roles.includes('super-admin') ||
+    permissions.includes('view transport') ||
+    permissions.includes('manage transport') ||
+    permissions.includes('execute trips');
 
   return (
     <Tabs
@@ -35,6 +42,14 @@ export default function TabLayout() {
         options={{
           title: 'Grades',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="transport"
+        options={{
+          href: canAccessTransport ? undefined : null,
+          title: 'Transport',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bus.fill" color={color} />,
         }}
       />
       <Tabs.Screen

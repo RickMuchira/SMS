@@ -90,6 +90,16 @@ export const Map = forwardRef<MapLibreGL.Map, MapProps>(
       };
     }, []);
 
+    useEffect(() => {
+      if (!map) return;
+
+      map.flyTo({
+        center: center as [number, number],
+        zoom,
+        essential: true,
+      });
+    }, [map, center, zoom]);
+
     const contextValue = useMemo(
       () => ({ map, theme }),
       [map, theme]
@@ -113,6 +123,7 @@ interface MarkerProps {
   options?: MarkerOptions;
   children?: ReactNode;
   onClick?: () => void;
+  onDragEnd?: (coordinates: { longitude: number; latitude: number }) => void;
 }
 
 export function Marker({
@@ -121,6 +132,7 @@ export function Marker({
   options,
   children,
   onClick,
+  onDragEnd,
 }: MarkerProps) {
   const { map } = useMap();
   const markerRef = useRef<MapLibreGL.Marker | null>(null);
@@ -140,6 +152,16 @@ export function Marker({
       element.addEventListener("click", onClick);
     }
 
+    if (onDragEnd) {
+      marker.on("dragend", () => {
+        const lngLat = marker.getLngLat();
+        onDragEnd({
+          longitude: lngLat.lng,
+          latitude: lngLat.lat,
+        });
+      });
+    }
+
     markerRef.current = marker;
 
     return () => {
@@ -148,7 +170,7 @@ export function Marker({
       }
       marker.remove();
     };
-  }, [map, longitude, latitude, onClick, options]);
+  }, [map, longitude, latitude, onClick, onDragEnd, options]);
 
   if (!elementRef.current) return null;
 

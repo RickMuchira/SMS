@@ -20,6 +20,9 @@ class SystemSettingController extends Controller
             'email_format' => SystemSetting::get('email_format', '{firstname}.{lastname}'),
             'app_name' => SystemSetting::get('app_name', 'School Management'),
             'app_logo' => SystemSetting::get('app_logo', null),
+            'school_latitude' => SystemSetting::get('school_latitude'),
+            'school_longitude' => SystemSetting::get('school_longitude'),
+            'school_address' => SystemSetting::get('school_address'),
         ];
 
         return response($settings, Response::HTTP_OK);
@@ -35,6 +38,9 @@ class SystemSettingController extends Controller
             'email_format' => ['nullable', 'string', 'max:255'],
             'app_name' => ['nullable', 'string', 'max:255'],
             'logo' => ['nullable', 'file', 'image', 'max:2048'],
+            'school_latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'school_longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'school_address' => ['nullable', 'string', 'max:1000'],
         ]);
 
         if (isset($validated['email_domain'])) {

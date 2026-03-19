@@ -18,10 +18,16 @@ class Location extends Model
         'address',
         'location_type',
         'student_id',
+        'bus_id',
         'order_sequence',
         'created_by',
         'is_verified',
     ];
+
+    public function bus(): BelongsTo
+    {
+        return $this->belongsTo(Bus::class);
+    }
 
     public function student(): BelongsTo
     {

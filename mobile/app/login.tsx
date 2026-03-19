@@ -52,11 +52,7 @@ export default function LoginScreen() {
   function validatePassword(pwd: string): boolean {
     const trimmed = pwd.trim();
     if (!trimmed) {
-      setPasswordError('Password is required');
-      return false;
-    }
-    if (trimmed.length < 10) {
-      setPasswordError('Phone number should be at least 10 digits');
+      setPasswordError('Password or guardian phone number is required');
       return false;
     }
     setPasswordError(null);
@@ -101,11 +97,11 @@ export default function LoginScreen() {
               Welcome Back
             </ThemedText>
             <ThemedText style={styles.subtitle}>
-              Sign in to continue
+              Sign in as a student, driver, or transport assistant
             </ThemedText>
 
             <ThemedView style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Student Email</ThemedText>
+              <ThemedText style={styles.label}>Account Email</ThemedText>
               <TextInput
                 style={[
                   styles.input,
@@ -131,8 +127,8 @@ export default function LoginScreen() {
                 autoComplete="email"
                 editable={!isLoading}
                 returnKeyType="next"
-                accessibilityLabel="Student email input"
-                accessibilityHint="Enter the student's email address"
+                accessibilityLabel="Account email input"
+                accessibilityHint="Enter the account email address"
               />
               {emailError && (
                 <ThemedText style={[styles.fieldError, { color: errorColor }]}>
@@ -142,7 +138,7 @@ export default function LoginScreen() {
             </ThemedView>
 
             <ThemedView style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Guardian Phone Number</ThemedText>
+              <ThemedText style={styles.label}>Password or Guardian Phone</ThemedText>
               <TextInput
                 style={[
                   styles.input,
@@ -168,8 +164,8 @@ export default function LoginScreen() {
                 editable={!isLoading}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
-                accessibilityLabel="Guardian phone number input"
-                accessibilityHint="Enter any guardian's phone number"
+                accessibilityLabel="Password or guardian phone input"
+                accessibilityHint="Enter the account password or any guardian phone number"
               />
               {passwordError && (
                 <ThemedText style={[styles.fieldError, { color: errorColor }]}>
@@ -177,7 +173,7 @@ export default function LoginScreen() {
                 </ThemedText>
               )}
               <ThemedText style={styles.hint}>
-                Use any of the guardian&apos;s phone numbers
+                Students use a guardian phone number. Drivers and assistants use their normal account password.
               </ThemedText>
             </ThemedView>
 

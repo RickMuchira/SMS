@@ -126,6 +126,12 @@ export function AppSidebar() {
                       title: 'Transport',
                       href: '/transport',
                       icon: Bus,
+                      items: [
+                          ...(hasPermission('manage transport')
+                              ? [{ title: 'Buses', href: '/admin/transport/buses' }]
+                              : []),
+                          { title: 'Mark locations', href: '/transport/mark-location' },
+                      ],
                   } satisfies NavItem,
               ]
             : []),

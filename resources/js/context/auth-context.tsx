@@ -48,7 +48,7 @@ export function AuthProvider({
             {
                 key: 'transport',
                 label: 'Transport Module',
-                required: ['view transport', 'manage transport'],
+                required: ['view transport', 'manage transport', 'execute trips'],
             },
             {
                 key: 'staff',

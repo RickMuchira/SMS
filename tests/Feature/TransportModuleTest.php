@@ -1,9 +1,12 @@
 <?php
 
 use App\Models\Bus;
+use App\Models\Location;
+use App\Models\StudentTransport;
 use App\Models\Trip;
 use App\Models\TripStop;
 use App\Models\User;
+use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
@@ -207,6 +210,120 @@ test('driver can update stop status', function () {
     ]);
 });
 
+test('driver can save and later update a student location from mobile', function () {
+    $response = $this->actingAs($this->driver, 'sanctum')->postJson(
+        '/api/mobile/transport/locations',
+        [
+            'student_id' => $this->student->id,
+            'latitude' => -1.3001,
+            'longitude' => 36.8001,
+            'location_type' => 'pickup',
+            'address' => 'Blue gate near the church',
+        ],
+    );
+
+    $response->assertOk()
+        ->assertJsonPath('location.address', 'Blue gate near the church');
+
+    $location = Location::query()
+        ->where('student_id', $this->student->id)
+        ->where('location_type', 'pickup')
+        ->first();
+
+    expect($location)->not->toBeNull();
+    expect((float) $location->latitude)->toBe(-1.3001);
+    expect((float) $location->longitude)->toBe(36.8001);
+
+    $transport = StudentTransport::where('student_id', $this->student->id)->first();
+
+    expect($transport)->not->toBeNull();
+    expect($transport->pickup_location_id)->toBe($location->id);
+
+    $secondResponse = $this->actingAs($this->driver, 'sanctum')->postJson(
+        '/api/mobile/transport/locations',
+        [
+            'student_id' => $this->student->id,
+            'latitude' => -1.3005,
+            'longitude' => 36.8005,
+            'location_type' => 'pickup',
+            'address' => 'Updated gate',
+        ],
+    );
+
+    $secondResponse->assertOk()
+        ->assertJsonPath('location.address', 'Updated gate');
+
+    $updatedLocation = $location->fresh();
+
+    expect((float) $updatedLocation->latitude)->toBe(-1.3005);
+    expect((float) $updatedLocation->longitude)->toBe(36.8005);
+    expect($updatedLocation->address)->toBe('Updated gate');
+});
+
+test('transport map page and location saving require transport permissions', function () {
+    $student = User::factory()->create();
+    $regularUser = User::factory()->create();
+    $transportUser = User::factory()->create();
+
+    Permission::firstOrCreate(['name' => 'view transport', 'guard_name' => 'web']);
+    $transportUser->givePermissionTo('view transport');
+
+    $response = $this->actingAs($transportUser)->get('/transport/mark-location');
+    $response->assertOk();
+    $response->assertInertia(fn ($page) => $page
+        ->component('transport/mark-location')
+        ->has('students')
+        ->has('buses')
+        ->has('schoolLocation'));
+
+    $bus = Bus::factory()->create();
+    $this->actingAs($transportUser)
+        ->postJson('/transport/locations', [
+            'student_id' => $student->id,
+            'bus_id' => $bus->id,
+            'latitude' => -1.2922,
+            'longitude' => 36.8220,
+            'location_type' => 'pickup',
+            'address' => 'Bus-specific pickup',
+        ])
+        ->assertOk();
+
+    $busLocation = Location::query()
+        ->where('student_id', $student->id)
+        ->where('bus_id', $bus->id)
+        ->where('location_type', 'pickup')
+        ->first();
+    expect($busLocation)->not->toBeNull();
+    expect($busLocation->address)->toBe('Bus-specific pickup');
+
+    $this->actingAs($regularUser)
+        ->get('/transport/mark-location')
+        ->assertForbidden();
+
+    $this->actingAs($transportUser)
+        ->get('/transport/mark-location')
+        ->assertOk();
+
+    $this->actingAs($regularUser)
+        ->postJson('/transport/locations', [
+            'student_id' => $student->id,
+            'latitude' => -1.2921,
+            'longitude' => 36.8219,
+            'location_type' => 'pickup',
+        ])
+        ->assertForbidden();
+
+    $this->actingAs($transportUser)
+        ->postJson('/transport/locations', [
+            'student_id' => $student->id,
+            'latitude' => -1.2921,
+            'longitude' => 36.8219,
+            'location_type' => 'pickup',
+            'address' => 'School gate',
+        ])
+        ->assertOk();
+});
+
 test('admin can view trip details with stops', function () {
     $bus = Bus::factory()->create();
     $trip = Trip::create([
@@ -251,6 +368,78 @@ test('admin can view trip details with stops', function () {
         ]);
 
     expect($response->json('trip.stops'))->toHaveCount(3);
+});
+
+test('mobile transport endpoints require transport permissions', function () {
+    $bus = Bus::factory()->create();
+    $trip = Trip::create([
+        'name' => 'Morning Trip',
+        'type' => 'morning',
+        'trip_number' => 1,
+        'bus_id' => $bus->id,
+        'trip_date' => today(),
+        'driver_id' => $this->driver->id,
+        'status' => 'planned',
+    ]);
+
+    $stop = TripStop::create([
+        'trip_id' => $trip->id,
+        'student_id' => $this->student->id,
+        'order_sequence' => 1,
+        'latitude' => -1.2921,
+        'longitude' => 36.8219,
+        'status' => 'pending',
+    ]);
+
+    $unauthorizedMobileUser = User::factory()->create();
+
+    $this->actingAs($unauthorizedMobileUser, 'sanctum')
+        ->getJson('/api/mobile/transport/trips/today')
+        ->assertForbidden();
+
+    $this->actingAs($unauthorizedMobileUser, 'sanctum')
+        ->patchJson("/api/mobile/transport/trips/{$trip->id}/stops/{$stop->id}", [
+            'status' => 'picked_up',
+        ])
+        ->assertForbidden();
+});
+
+test('driver cannot update stops for a trip they are not assigned to', function () {
+    $otherDriver = User::factory()->create();
+    $driverRole = Role::firstOrCreate(['name' => 'driver']);
+    $otherDriver->assignRole($driverRole);
+    $otherDriver->givePermissionTo(['view transport', 'execute trips']);
+
+    $bus = Bus::factory()->create();
+    $trip = Trip::create([
+        'name' => 'Other Driver Trip',
+        'type' => 'morning',
+        'trip_number' => 1,
+        'bus_id' => $bus->id,
+        'trip_date' => today(),
+        'driver_id' => $otherDriver->id,
+        'status' => 'planned',
+    ]);
+
+    $stop = TripStop::create([
+        'trip_id' => $trip->id,
+        'student_id' => $this->student->id,
+        'order_sequence' => 1,
+        'latitude' => -1.2921,
+        'longitude' => 36.8219,
+        'status' => 'pending',
+    ]);
+
+    $this->actingAs($this->driver, 'sanctum')
+        ->patchJson("/api/mobile/transport/trips/{$trip->id}/stops/{$stop->id}", [
+            'status' => 'picked_up',
+        ])
+        ->assertForbidden();
+
+    $this->assertDatabaseHas('trip_stops', [
+        'id' => $stop->id,
+        'status' => 'pending',
+    ]);
 });
 
 test('bus cannot be deleted if it has trips', function () {

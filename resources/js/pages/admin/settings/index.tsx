@@ -12,6 +12,9 @@ type SystemSettings = {
     app_logo: string;
     email_domain: string;
     email_format: string;
+    school_latitude: string | number | null;
+    school_longitude: string | number | null;
+    school_address: string | null;
 };
 
 type Props = {
@@ -28,6 +31,13 @@ export default function AdminSettingsIndex({ settings }: Props) {
     const [appLogo, setAppLogo] = useState(settings.app_logo);
     const [emailDomain, setEmailDomain] = useState(settings.email_domain);
     const [emailFormat, setEmailFormat] = useState(settings.email_format);
+    const [schoolLatitude, setSchoolLatitude] = useState(
+        settings.school_latitude?.toString() ?? '',
+    );
+    const [schoolLongitude, setSchoolLongitude] = useState(
+        settings.school_longitude?.toString() ?? '',
+    );
+    const [schoolAddress, setSchoolAddress] = useState(settings.school_address ?? '');
     const [submitting, setSubmitting] = useState(false);
 
     function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -41,6 +51,9 @@ export default function AdminSettingsIndex({ settings }: Props) {
                 app_logo: appLogo,
                 email_domain: emailDomain,
                 email_format: emailFormat,
+                school_latitude: schoolLatitude || null,
+                school_longitude: schoolLongitude || null,
+                school_address: schoolAddress || null,
             },
             {
                 onFinish: () => setSubmitting(false),
@@ -88,6 +101,50 @@ export default function AdminSettingsIndex({ settings }: Props) {
                                         />
                                         <p className="text-xs text-muted-foreground">
                                             Path or URL to your organization's logo
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-medium">School Location</h3>
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="school-latitude">Latitude</Label>
+                                        <Input
+                                            id="school-latitude"
+                                            value={schoolLatitude}
+                                            onChange={(e) => setSchoolLatitude(e.target.value)}
+                                            placeholder="e.g. -1.2921"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Used as the default map center for transport tools.
+                                        </p>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="school-longitude">Longitude</Label>
+                                        <Input
+                                            id="school-longitude"
+                                            value={schoolLongitude}
+                                            onChange={(e) => setSchoolLongitude(e.target.value)}
+                                            placeholder="e.g. 36.8219"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Drivers and admins can still switch to their current
+                                            position when marking locations.
+                                        </p>
+                                    </div>
+                                    <div className="space-y-2 md:col-span-2">
+                                        <Label htmlFor="school-address">School Address</Label>
+                                        <Input
+                                            id="school-address"
+                                            value={schoolAddress}
+                                            onChange={(e) => setSchoolAddress(e.target.value)}
+                                            placeholder="e.g. Main campus, Karen Road"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Optional label shown when school location is used as the
+                                            map default.
                                         </p>
                                     </div>
                                 </div>

@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BusController;
 use App\Http\Controllers\Api\DriverController;
 use App\Http\Controllers\Api\FeeController;
+use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\ModuleController;
 use App\Http\Controllers\Api\PayrollController;
 use App\Http\Controllers\Api\PermissionController;
@@ -136,8 +137,14 @@ Route::middleware(['auth'])->group(function (): void {
 }
 );
 
-// Mobile API routes for drivers/assistants
+// Mobile API routes for transport staff
 Route::middleware(['auth:sanctum'])->prefix('mobile/transport')->group(function (): void {
-    Route::get('trips/today', [TransportTripController::class, 'todaysTrips']);
-    Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+    Route::middleware('permission:view transport|manage transport|execute trips')->group(function (): void {
+        Route::get('trips/today', [TransportTripController::class, 'todaysTrips']);
+    });
+
+    Route::middleware('permission:execute trips')->group(function (): void {
+        Route::patch('trips/{trip}/stops/{stop}', [TransportTripController::class, 'updateStop']);
+        Route::post('locations', [LocationController::class, 'store']);
+    });
 });
